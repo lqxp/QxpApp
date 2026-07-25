@@ -80,7 +80,7 @@ let
       QXP_WS_URL=wss://qxch.at/ws \
       QXP_CALLS_ENABLED=true \
       QXP_RELAY_ONLY=true \
-      QXP_TURN_URLS='turn:turn.qxp.kisakay.com:3478?transport=udp,turn:turn.qxp.kisakay.com:3478?transport=tcp,turns:turn.qxp.kisakay.com:5349?transport=tcp' \
+      QXP_TURN_URLS='turn:relay-01.qxch.at:3478?transport=udp,turn:relay-01.qxch.at:3478?transport=tcp,turns:relay-01.qxch.at:5349?transport=tcp' \
       QXP_TURN_USERNAME=qxp-turn \
       QXP_TURN_CREDENTIAL=df64240e730e15fdfb75d6cff95367b95ed341bd98517544 \
       pnpm run build:tauri
