@@ -18,11 +18,12 @@ load_dotenv
 if [[ "${LQXP_ANDROID_BUILD_RUNNING:-}" != "1" ]]; then
   if command -v nix >/dev/null 2>&1 && [[ -f flake.nix ]]; then
     echo "Entering nix develop for Android build..."
-    exec env TMPDIR=/tmp nix develop --command env TMPDIR=/tmp LQXP_ANDROID_BUILD_RUNNING=1 scripts/build-android.sh "$@"
-    fi
+    exec env TMPDIR=/tmp nix develop \
+      --command env TMPDIR=/tmp LQXP_ANDROID_BUILD_RUNNING=1 \
+      scripts/build-android.sh "$@"
+  fi
 
   echo "warning: not running inside nix develop, continuing with the current environment." >&2
-  fi
 fi
 
 command -v bun >/dev/null 2>&1 || {
