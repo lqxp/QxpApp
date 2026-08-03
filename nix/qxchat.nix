@@ -39,7 +39,7 @@
 
 let
   pname = "qxchat";
-  version = "1.13.11";
+  version = "1.13.12";
 
   webkitgtk = webkitgtk_4_1.override {
     enableExperimental = true;
