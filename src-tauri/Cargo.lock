@@ -2895,7 +2895,7 @@ dependencies = [
 
 [[package]]
 name = "qxchat"
-version = "1.13.10"
+version = "1.14.1"
 dependencies = [
  "reqwest",
  "semver",

@@ -27,6 +27,14 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IGF1dG9tYXRpYyB1cGRhdGUga2V5CmRXRTVkM0psZEdWa0lHTnZiVzFsYm5ROUlDMDZJa0ZVWlZORlVGVlNWRVZUUkU1RVFrVkZSVlJCVTBWVlZWQlBSVlJCVTBWVlZWQg==",
+      "endpoints": [
+        "https://github.com/lqxp/app/releases/latest/download/latest.json"
+      ]
+    }
+  },
   "bundle": {
     "active": true,
     "targets": [

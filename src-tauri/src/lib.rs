@@ -5,7 +5,7 @@ use std::env;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    Manager,
+    Emitter, Manager,
 };
 
 #[cfg(any(
@@ -242,13 +242,11 @@ fn prompt_update(app: tauri::AppHandle, update: AvailableUpdate) {
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn check_updates_from_tray(app: tauri::AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        match fetch_available_update().await {
-            Ok(Some(update)) => prompt_update(app, update),
-            Ok(None) => show_no_update_available(app),
-            Err(error) => show_update_check_error(app, error),
-        }
-    });
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+        let _ = window.emit("qx:check-updates", ());
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

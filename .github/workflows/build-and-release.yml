@@ -66,6 +66,7 @@ jobs:
               src-tauri/target/release/bundle/appimage/*.AppImage
               src-tauri/target/release/bundle/deb/*.deb
               src-tauri/target/release/bundle/rpm/*.rpm
+              src-tauri/target/release/bundle/latest*.json
           - platform_name: Linux-arm64
             runner: ubuntu-24.04-arm
             rust_targets: ''
@@ -74,24 +75,28 @@ jobs:
               src-tauri/target/release/bundle/appimage/*.AppImage
               src-tauri/target/release/bundle/deb/*.deb
               src-tauri/target/release/bundle/rpm/*.rpm
+              src-tauri/target/release/bundle/latest*.json
           - platform_name: Windows-x64
             runner: windows-latest
             rust_targets: x86_64-pc-windows-msvc
             args: --target x86_64-pc-windows-msvc --bundles msi
             release_files: |
               src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+              src-tauri/target/x86_64-pc-windows-msvc/release/bundle/latest*.json
           - platform_name: Windows-arm64
             runner: windows-latest
             rust_targets: aarch64-pc-windows-msvc
             args: --target aarch64-pc-windows-msvc --bundles msi
             release_files: |
               src-tauri/target/aarch64-pc-windows-msvc/release/bundle/msi/*.msi
+              src-tauri/target/aarch64-pc-windows-msvc/release/bundle/latest*.json
           - platform_name: macOS
             runner: macos-latest
             rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
             args: --target universal-apple-darwin --bundles dmg
             release_files: |
               src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+              src-tauri/target/universal-apple-darwin/release/bundle/latest*.json
 
     steps:
       - name: Checkout repository
