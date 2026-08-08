@@ -69,10 +69,14 @@ jobs:
             nix/qxchat.nix
 
       - name: Auto-merge PR
-        if: steps.hash.outputs.already_ok != 'true' && steps.create-pr.outputs.pull-request-number != '' && secrets.NIXOS_BUILD_USER_PAT_TOKEN != ''
+        if: steps.hash.outputs.already_ok != 'true' && steps.create-pr.outputs.pull-request-number != ''
         env:
           GH_TOKEN: ${{ secrets.NIXOS_BUILD_USER_PAT_TOKEN }}
         run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "NIXOS_BUILD_USER_PAT_TOKEN secret is not set — skipping auto-merge"
+            exit 0
+          fi
           gh pr merge ${{ steps.create-pr.outputs.pull-request-number }} \
             --squash \
             --admin \
