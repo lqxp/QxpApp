@@ -54,7 +54,7 @@ jobs:
         uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.NIXOS_BUILD_USER_PAT_TOKEN != '' && secrets.NIXOS_BUILD_USER_PAT_TOKEN || github.token }}
-          commit-message: "chore(nix): update pnpm fetch hash [skip ci]"
+          commit-message: "chore(nix): update pnpm fetch hash"
           title: "chore(nix): update pnpm fetch hash"
           body: |
             Automated update of the `fetchPnpmDeps` hash in `nix/qxchat.nix`.
@@ -69,11 +69,11 @@ jobs:
             nix/qxchat.nix
 
       - name: Auto-merge PR
-        if: steps.hash.outputs.already_ok != 'true' && steps.create-pr.outputs.pull-request-number != ''
+        if: steps.hash.outputs.already_ok != 'true' && steps.create-pr.outputs.pull-request-number != '' && secrets.NIXOS_BUILD_USER_PAT_TOKEN != ''
         env:
-          GH_TOKEN: ${{ secrets.NIXOS_BUILD_USER_PAT_TOKEN != '' && secrets.NIXOS_BUILD_USER_PAT_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.NIXOS_BUILD_USER_PAT_TOKEN }}
         run: |
           gh pr merge ${{ steps.create-pr.outputs.pull-request-number }} \
             --squash \
-            --auto \
+            --admin \
             --delete-branch
