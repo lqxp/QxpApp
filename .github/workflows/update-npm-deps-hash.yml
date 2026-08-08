@@ -12,16 +12,6 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Skip if bot-authored commit
-        shell: bash
-        run: |
-          author=$(git log -1 --format='%ae')
-          message=$(git log -1 --format='%s')
-          if [[ "$author" == *"github-actions"* ]] || [[ "$author" == *"bot"* ]] || [[ "$message" == *"[skip ci]"* ]]; then
-            echo "Bot-authored or skip-ci commit detected, exiting."
-            exit 0
-          fi
-
       - uses: cachix/install-nix-action@v27
 
       - name: Try build and capture expected hash
