@@ -94,9 +94,24 @@ configure_android_release_signing() {
   is_release_build "$@" || return 0
 
   local keystore_properties="src-tauri/gen/android/keystore.properties"
-  local keystore_path="${ANDROID_KEYSTORE_PATH:-$HOME/.config/qxchat/qxchat-release.jks}"
+
+  # Auto-detect the release keystore: env var → home config → project root
+  local project_root
+  project_root="$(cd "$(dirname "$0")/.." && pwd)"
+  local keystore_path="${ANDROID_KEYSTORE_PATH:-}"
+  if [[ -z "$keystore_path" ]]; then
+    local home_keystore="$HOME/.config/qxchat/qxchat-release.jks"
+    if [[ -f "$home_keystore" ]]; then
+      keystore_path="$home_keystore"
+    elif [[ -f "$project_root/lqxp-release.jks" ]]; then
+      keystore_path="$project_root/lqxp-release.jks"
+    else
+      keystore_path="$home_keystore"
+    fi
+  fi
+
   local keystore_password="${ANDROID_KEYSTORE_PASSWORD:-}"
-  local key_alias="${ANDROID_KEY_ALIAS:-qxchat}"
+  local key_alias="${ANDROID_KEY_ALIAS:-lqxp}"
   local key_password="${ANDROID_KEY_PASSWORD:-$keystore_password}"
 
   local has_explicit_signing_config=0
@@ -139,23 +154,56 @@ configure_android_release_signing() {
   fi
 
   if [[ -f "$keystore_path" && -n "$keystore_password" && -n "$key_alias" && -n "$key_password" ]]; then
-    cat > "$keystore_properties" <<EOF
+    cat > "$keystore_properties" <<KSPROP
 ANDROID_KEYSTORE_PATH=$keystore_path
 ANDROID_KEYSTORE_PASSWORD=$keystore_password
 ANDROID_KEY_ALIAS=$key_alias
 ANDROID_KEY_PASSWORD=$key_password
-EOF
+KSPROP
     chmod 600 "$keystore_properties"
     echo "Android release signing enabled via $keystore_properties"
     return 0
   fi
 
-  cat >&2 <<EOF
+  # Keystore file exists but no password in env → prompt interactively
+  if [[ -f "$keystore_path" && -t 0 ]]; then
+    read -rsp "Keystore password for $keystore_path: " keystore_password
+    echo
+    key_alias="${ANDROID_KEY_ALIAS:-lqxp}"
+    key_password="${ANDROID_KEY_PASSWORD:-$keystore_password}"
+    if [[ -n "$keystore_password" ]]; then
+      cat > "$keystore_properties" <<KSPROP
+ANDROID_KEYSTORE_PATH=$keystore_path
+ANDROID_KEYSTORE_PASSWORD=$keystore_password
+ANDROID_KEY_ALIAS=$key_alias
+ANDROID_KEY_PASSWORD=$key_password
+KSPROP
+      chmod 600 "$keystore_properties"
+      echo "Android release signing enabled via $keystore_properties"
+      return 0
+    fi
+  fi
+
+  cat >&2 <<WARN
 warning: release signing is not configured; Gradle will produce an unsigned APK.
-To create and use a local release keystore, run for example:
-  LQXP_ANDROID_CREATE_KEYSTORE=1 ANDROID_KEYSTORE_PASSWORD='change-me' bun run build:android -- --apk --target aarch64
-Or set ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and optionally ANDROID_KEY_PASSWORD.
-EOF
+
+The release keystore was auto-detected at: $keystore_path
+WARN
+  if [[ -f "$keystore_path" ]]; then
+    echo "  → Keystore file exists, but password is missing." >&2
+  else
+    echo "  → Keystore file NOT found." >&2
+  fi
+  cat >&2 <<WARN
+
+To sign the APK, set these environment variables (e.g. in a .env file):
+  ANDROID_KEYSTORE_PASSWORD='<password>'
+  ANDROID_KEY_ALIAS='lqxp'         (default: lqxp)
+  ANDROID_KEY_PASSWORD='<password>' (defaults to ANDROID_KEYSTORE_PASSWORD)
+
+Or to create a new local debug keystore:
+  LQXP_ANDROID_CREATE_KEYSTORE=1 ANDROID_KEYSTORE_PASSWORD='change-me' bun run build:android
+WARN
 }
 
 if [[ -z "${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}" ]]; then
@@ -216,7 +264,7 @@ bun install --no-save
 
 build_args=("$@")
 if [[ ${#build_args[@]} -eq 0 ]]; then
-  build_args=(--debug --apk --target aarch64)
+  build_args=(--apk --target aarch64)
 fi
 
 configure_android_release_signing "${build_args[@]}"
