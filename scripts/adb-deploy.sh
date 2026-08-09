@@ -10,6 +10,16 @@ NC='\033[0m' # No Color
 
 PACKAGE="com.qxp.client"
 APK_DIR="src-tauri/gen/android/app/build/outputs/apk"
+DEV_PORT="${QXP_DEV_PORT:-4560}"
+
+DO_LOG=false
+DO_DEV=false
+for arg in "$@"; do
+  case "$arg" in
+    --log|-l) DO_LOG=true ;;
+    --dev|-d) DO_DEV=true ;;
+  esac
+done
 
 # ── 1. Find the APK ──────────────────────────────────────────────
 
@@ -70,7 +80,16 @@ fi
 
 echo -e "${GREEN}Device: $DEVICE${NC}"
 
-# ── 5. Uninstall old version ─────────────────────────────────────
+# ── 5. Reverse port forwarding (dev mode) ───────────────────────
+
+if $DO_DEV; then
+  echo "Setting up reverse proxy :${DEV_PORT} → device:${DEV_PORT}..."
+  adb -s "$DEVICE" reverse tcp:"$DEV_PORT" tcp:"$DEV_PORT" 2>/dev/null || true
+  echo -e "${GREEN}Reverse proxy active:${NC}"
+  adb -s "$DEVICE" reverse --list 2>/dev/null || true
+fi
+
+# ── 6. Uninstall old version ─────────────────────────────────────
 
 INSTALLED="$(adb -s "$DEVICE" shell pm list packages "$PACKAGE" 2>/dev/null || true)"
 if [[ -n "$INSTALLED" ]]; then
@@ -82,7 +101,7 @@ if [[ -n "$INSTALLED" ]]; then
   sleep 1
 fi
 
-# ── 6. Install new APK ───────────────────────────────────────────
+# ── 7. Install new APK ───────────────────────────────────────────
 
 echo "Installing..."
 if adb -s "$DEVICE" install -r "$APK" 2>&1; then
@@ -99,16 +118,16 @@ else
   fi
 fi
 
-# ── 7. Launch the app ────────────────────────────────────────────
+# ── 8. Launch the app ────────────────────────────────────────────
 
 echo "Launching..."
 adb -s "$DEVICE" shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
 
 echo -e "${GREEN}Done — QxChat launched on $DEVICE${NC}"
 
-# ── 8. Show logcat (optional) ────────────────────────────────────
+# ── 9. Show logcat (optional) ────────────────────────────────────
 
-if [[ "${1:-}" == "--log" || "${1:-}" == "-l" ]]; then
+if $DO_LOG; then
   echo "── logcat ────────────────────────────────────────"
   adb -s "$DEVICE" logcat -c
   adb -s "$DEVICE" logcat -v time chromium:V *:S 2>/dev/null | grep -iE "qxp|tauri|console" || true
