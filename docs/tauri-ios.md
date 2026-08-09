@@ -2,26 +2,15 @@
 
 ## Reality check
 
-**Xcode cannot build for a physical iOS device without at least a free Apple ID.** The `Personal Team` (free account) is the minimum Xcode requires to create a provisioning profile, even for development builds. `CODE_SIGN_IDENTITY=""` alone is not enough for device builds.
+**Xcode cannot build for a physical iOS device without at least a free Apple ID.** The `Personal Team` (free account) is the minimum Xcode requires to create a provisioning profile, even for development builds.
 
-This CI supports two modes:
+This CI uses Tauri's `--no-sign` flag to skip code signing entirely.
+- If Xcode allows device builds without signing → unsigned IPA for `iphoneos` (ideal)
+- If Xcode refuses → falls back to `iphonesimulator` build (unsigned, simulator only)
 
-| Mode | CI secrets needed | Result | Installable? | Duration |
-|---|---|---|---|---|
-| **Free Apple ID** | `APPLE_ID` + `APPLE_ID_PASSWORD` | Signed IPA | Yes, immediately | 7 days |
-| **No Apple ID** | None | Simulator .app | No | N/A |
+The resulting IPA is **unsigned** — users must sign it with their own Apple ID via AltStore / SideStore / Sideloadly.
 
-**With a free Apple ID** (recommended): the CI produces a **7-day signed IPA** that users can install immediately. For long-term use, they re-sign with their own Apple ID via AltStore/SideStore/Sideloadly.
-
-## Setting up the free Apple ID for CI
-
-1. Go to https://appleid.apple.com
-2. Create a new Apple ID (e.g. `qxp-ci@icloud.com`) — free, no payment needed
-3. In Security → App-Specific Passwords, generate one (name: "GitHub CI")
-4. In GitHub repo → Settings → Secrets and variables → Actions, add:
-   - `APPLE_ID` = your CI Apple ID email
-   - `APPLE_ID_PASSWORD` = the app-specific password
-5. That's it. Xcode auto-creates a Personal Team + 7-day dev certificate on first build.
+**Zero Apple secrets required.** No Apple ID, no Developer account, no certificates, no provisioning profiles.
 
 ## Architecture
 
@@ -35,16 +24,15 @@ GitHub Actions (macos-latest)
         ├─ Bun + Tauri CLI
         ├─ sync-runtime-config.mjs → dist/runtime-config.js
         ├─ tauri ios init + pod install
-        ├─ IF APPLE_ID set: xcodebuild with -allowProvisioningUpdates
-        │   → Personal Team auto-created → signed .app (7 days)
-        ├─ IF no Apple ID: fallback iphonesimulator build
-        │   → unsigned .app (simulator only)
-        ├─ Package → .ipa (zip Payload/)
+        ├─ tauri ios build --no-sign
+        │   ├─ Success → unsigned .app for iphoneos
+        │   └─ Failure → fallback iphonesimulator
+        ├─ Package → .ipa (zip Payload/) + .app.zip
         └─ Upload artifact + attach to GitHub Release
                 │
                 ▼
-        User downloads IPA → installs (if signed, 7 days)
-        User re-signs with own Apple ID for long-term use
+        User downloads IPA
+        User signs with own Apple ID via AltStore/SideStore/Sideloadly
 ```
 
 ## Local build
@@ -52,31 +40,11 @@ GitHub Actions (macos-latest)
 iOS builds require macOS with the full Xcode app installed.
 
 ```bash
-nix develop
+# Signed (requires Apple ID in Xcode)
 bun run ios:build --export-method development
-```
 
-Without Nix:
-
-```bash
-./scripts/ios-build.sh --export-method development
-```
-
-### Build with free Apple ID
-
-```bash
-export APPLE_ID="your@email.com"
-export APPLE_APP_SPECIFIC_PASSWORD="xxxx-xxxx-xxxx-xxxx"
-bun run ios:build --export-method development --allow-provisioning-updates
-```
-
-### Build unsigned (simulator only)
-
-```bash
-export CODE_SIGN_IDENTITY=""
-export CODE_SIGNING_REQUIRED=NO
-export CODE_SIGNING_ALLOWED=NO
-bun tauri ios build --target aarch64-apple-ios-sim
+# Unsigned
+bun tauri ios build --no-sign
 ```
 
 ## CI/CD (GitHub Actions)
@@ -88,39 +56,23 @@ Triggers:
 - `push tags v*.*.*` — auto-build on release tags
 
 Produces:
-- `qxchat-ios` artifact with `.ipa` (signed or simulator) + `.app.zip`
+- `qxchat-ios-unsigned` artifact with `.ipa` + `.app.zip`
 - If a tag push, attaches artifacts to the GitHub Release
 
-No secrets strictly required — but without `APPLE_ID`, the build targets simulator only.
+**Zero secrets needed** for the iOS build itself. The runtime config uses `QXP_SERVER_ORIGIN` etc. if set.
 
 ### `.github/workflows/build-and-release.yml` (commented-out signed job)
 
-The commented-out `build-ios` job in the main release workflow requires full Apple Developer secrets:
-- `APPLE_DEVELOPMENT_TEAM`
-- `APPLE_CERTIFICATE_P12_BASE64`
-- `APPLE_CERTIFICATE_PASSWORD`
-- `APPLE_PROVISIONING_PROFILE_BASE64`
-
-These are only needed for **paid** Apple Developer distribution. The standalone `ios.yml` uses only the free Apple ID.
+The commented-out `build-ios` job in the main release workflow requires full Apple Developer secrets for a **signed** IPA (App Store distribution).
 
 ## User installation (sideloading)
 
-### With free-signed IPA from CI (7 days)
-
-1. Download the IPA from GitHub Releases
-2. Install via AltStore / SideStore / Sideloadly with **any** Apple ID
-3. App runs for 7 days
-4. Re-install updated IPA to refresh
-
-### Re-signing for long-term use
-
-If the IPA is unsigned (no Apple ID in CI), or the 7 days expired:
-
-1. Install [AltStore](https://altstore.io) on iPhone (requires AltServer on a computer)
-2. Install [SideStore](https://sidestore.io) — no computer needed after setup
-3. Or use [Sideloadly](https://sideloadly.io) on your computer with USB
-
-All three sign the IPA with **your own** free Apple ID.
+1. Download the unsigned IPA from GitHub Releases
+2. Sign it with **your own free Apple ID** using:
+   - [AltStore](https://altstore.io) — requires AltServer on a computer, auto-refreshes
+   - [SideStore](https://sidestore.io) — no computer needed after setup
+   - [Sideloadly](https://sideloadly.io) — USB install from computer
+3. App runs for 7 days, renewable
 
 ## Limitations
 
@@ -131,15 +83,13 @@ All three sign the IPA with **your own** free Apple ID.
 | App Store distribution | No | Yes |
 | TestFlight | No | Yes |
 | Push notifications | No | Yes |
-| App Groups / Extensions | Limited | Full |
 
 ### Important notes
 
 - The 7-day limit is per-signature. AltStore/SideStore auto-refresh before expiry.
 - A free Apple ID can sign 10 app IDs per 7 days.
 - The app identifier (`com.qxp.client`) must match what the user signs with.
-- The CI's Apple ID is only used for the build — users re-sign with their own ID.
-- If the CI's certificate expires, just re-run the build (Xcode auto-renews).
+- If the CI produces a simulator-only build, users must build locally for their device.
 
 ## Verification
 
@@ -147,21 +97,9 @@ All three sign the IPA with **your own** free Apple ID.
 # Check .app exists
 ls -la src-tauri/gen/apple/build/arm64/*.app
 
-# Check signing status
+# Check signing status (should be unsigned)
 codesign -dv src-tauri/gen/apple/build/arm64/*.app 2>&1
 
 # Check IPA structure
-unzip -l QxChat_*_*.ipa | head -20
-# Should show Payload/QxChat.app/...
-
-# Verify with xcodebuild
-cd src-tauri/gen/apple
-xcodebuild \
-  -project QxChat.xcodeproj \
-  -scheme QxChat \
-  -configuration Release \
-  -sdk iphoneos \
-  -destination 'generic/platform=iOS' \
-  -allowProvisioningUpdates \
-  build
+unzip -l QxChat_*_unsigned.ipa | head -20
 ```
