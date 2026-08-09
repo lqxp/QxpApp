@@ -12,16 +12,6 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Skip if bot-authored commit
-        shell: bash
-        run: |
-          author=$(git log -1 --format='%ae')
-          message=$(git log -1 --format='%s')
-          if [[ "$author" == *"github-actions"* ]] || [[ "$author" == *"bot"* ]] || [[ "$message" == *"[skip ci]"* ]]; then
-            echo "Bot-authored or skip-ci commit detected, exiting."
-            exit 0
-          fi
-
       - uses: cachix/install-nix-action@v27
 
       - name: Try build and capture expected hash
@@ -54,7 +44,7 @@ jobs:
         uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.NIXOS_BUILD_USER_PAT_TOKEN != '' && secrets.NIXOS_BUILD_USER_PAT_TOKEN || github.token }}
-          commit-message: "chore(nix): update pnpm fetch hash [skip ci]"
+          commit-message: "chore(nix): update pnpm fetch hash"
           title: "chore(nix): update pnpm fetch hash"
           body: |
             Automated update of the `fetchPnpmDeps` hash in `nix/qxchat.nix`.
@@ -71,9 +61,13 @@ jobs:
       - name: Auto-merge PR
         if: steps.hash.outputs.already_ok != 'true' && steps.create-pr.outputs.pull-request-number != ''
         env:
-          GH_TOKEN: ${{ secrets.NIXOS_BUILD_USER_PAT_TOKEN != '' && secrets.NIXOS_BUILD_USER_PAT_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.NIXOS_BUILD_USER_PAT_TOKEN }}
         run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "NIXOS_BUILD_USER_PAT_TOKEN secret is not set — skipping auto-merge"
+            exit 0
+          fi
           gh pr merge ${{ steps.create-pr.outputs.pull-request-number }} \
             --squash \
-            --auto \
+            --admin \
             --delete-branch

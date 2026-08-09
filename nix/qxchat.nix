@@ -39,7 +39,7 @@
 
 let
   pname = "qxchat";
-  version = "1.14.1";
+  version = "1.14.5";
 
   webkitgtk = webkitgtk_4_1.override {
     enableExperimental = true;
@@ -75,14 +75,40 @@ let
     buildPhase = ''
       runHook preBuild
       pnpm install --offline --frozen-lockfile --force
+
+      mkdir -p ../files
+      cat > ../files/config.custom.toml << 'TOML_EOF'
+      [rtc]
+      relayOnly = true
+      defaultTurnServer = "google-stun"
+
+      [[rtc.servers]]
+      id = "qxp-turn"
+      label = "QXP Server"
+      hint = "Self-hosted relay on our infrastructure — may be unstable under load. No IP exposed, everything goes through our relay."
+      turnUrls = [
+          "turn:relay-01.qxch.at:3478?transport=udp",
+          "turn:relay-01.qxch.at:3478?transport=tcp",
+          "turns:relay-01.qxch.at:5349?transport=tcp",
+      ]
+      turnUsername = "qxp-turn"
+      turnCredential = "ee74bf0f9bf21e74d98f2d85176c9b5cb85ffde977ec80e8"
+
+      [[rtc.servers]]
+      id = "google-stun"
+      label = "Google STUN"
+      hint = "Google public STUN — very stable and fast, but ⚠️ your IPs are exposed (no anonymous relay). Only useful on local networks or for testing."
+      turnUrls = [
+          "stun:stun.l.google.com:19302",
+          "stun:stun1.l.google.com:19302",
+      ]
+      TOML_EOF
+
       QXP_SERVER_ORIGIN=https://qxch.at \
       QXP_API_BASE_URL=https://qxch.at \
       QXP_WS_URL=wss://qxch.at/ws \
       QXP_CALLS_ENABLED=true \
       QXP_RELAY_ONLY=true \
-      QXP_TURN_URLS='turn:relay-01.qxch.at:3478?transport=udp,turn:relay-01.qxch.at:3478?transport=tcp,turns:relay-01.qxch.at:5349?transport=tcp' \
-      QXP_TURN_USERNAME=qxp-turn \
-      QXP_TURN_CREDENTIAL=df64240e730e15fdfb75d6cff95367b95ed341bd98517544 \
       pnpm run build:tauri
       runHook postBuild
     '';
