@@ -109,19 +109,19 @@ bun run build:android
 
 The script automatically enters the Nix development shell with `nix develop` when it is not already running inside Nix. It also prepares the Android SDK/NDK environment, Rust Android targets, and Tauri build dependencies.
 
-By default, `bun run build:android` builds a debug APK for `aarch64`:
+By default, `bun run build:android` builds a release APK for `aarch64`:
 
 ```bash
 bun run build:android
-# equivalent default args: --debug --apk --target aarch64
+# equivalent default args: --apk --target aarch64
 ```
 
-Debug APKs are signed with Android's debug key and are installable on development devices, but they are not suitable for release distribution.
+Release APKs are signed with the project keystore (`lqxp-release.jks` at the project root or `~/.config/qxchat/qxchat-release.jks`). The script prompts for the keystore password interactively if not set via `.env`.
 
-To build a release APK:
+To build a debug APK (unsigned, for quick iteration):
 
 ```bash
-bun run build:android -- --apk --target aarch64
+bun run build:android -- --debug --apk --target aarch64
 ```
 
 Release APK signing is configured through environment variables. `scripts/build-android.sh` loads a local `.env` file automatically if it exists, which can contain both Android signing settings and QXP runtime injection values. `.env`, keystores, and generated Gradle signing files are ignored by git.
@@ -200,6 +200,33 @@ The script also disables the Gradle daemon for Android builds because Gradle dae
 
 The GitHub workflow for simulator builds and signed IPA builds is documented in [docs/tauri-ios.md](docs/tauri-ios.md).
 
+### Android live testing against a local dev server
+
+Use `adb reverse` to forward the device's loopback to your local dev server, then build an APK targeting it:
+
+```bash
+# 1. Start the dev server on the host
+cd client && bun run dev
+
+# 2. Build APK pointing to localhost and deploy
+bun run build:android -- --local
+```
+
+The `--local` flag injects `QXP_SERVER_ORIGIN=http://127.0.0.1:4560` into the APK's runtime config.
+After install, the script sets up `adb reverse tcp:4560 tcp:4560` automatically — the app on the device reaches the host dev server through loopback.
+
+Full TCP forwarding (HTTP/1.1, WebSocket upgrades, everything). No emulator needed.
+
+```bash
+# Deploy an already-built APK with reverse proxy
+bun run adb
+
+# Deploy + live logcat
+bun run adb -- --log
+
+# Custom dev port
+QXP_DEV_PORT=3000 bun run adb
+```
 
 ### QxChat NixOS integration (flake example)
 

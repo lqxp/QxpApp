@@ -267,6 +267,25 @@ if [[ ${#build_args[@]} -eq 0 ]]; then
   build_args=(--apk --target aarch64)
 fi
 
+# Filter out our custom flags before passing to tauri/cargo
+LOCAL_DEV=false
+tauri_args=()
+for arg in "${build_args[@]}"; do
+  case "$arg" in
+    --local) LOCAL_DEV=true ;;
+    *) tauri_args+=("$arg") ;;
+  esac
+done
+build_args=("${tauri_args[@]}")
+if [[ ${#build_args[@]} -eq 0 ]]; then
+  build_args=(--apk --target aarch64)
+fi
+
+if $LOCAL_DEV; then
+  export QXP_SERVER_ORIGIN="${QXP_DEV_SERVER:-http://127.0.0.1:4560}"
+  echo -e "\033[1;33mLocal dev mode: targeting $QXP_SERVER_ORIGIN\033[0m"
+fi
+
 configure_android_release_signing "${build_args[@]}"
 
 set +e

@@ -13,11 +13,9 @@ APK_DIR="src-tauri/gen/android/app/build/outputs/apk"
 DEV_PORT="${QXP_DEV_PORT:-4560}"
 
 DO_LOG=false
-DO_DEV=false
 for arg in "$@"; do
   case "$arg" in
     --log|-l) DO_LOG=true ;;
-    --dev|-d) DO_DEV=true ;;
   esac
 done
 
@@ -80,16 +78,7 @@ fi
 
 echo -e "${GREEN}Device: $DEVICE${NC}"
 
-# ── 5. Reverse port forwarding (dev mode) ───────────────────────
-
-if $DO_DEV; then
-  echo "Setting up reverse proxy :${DEV_PORT} → device:${DEV_PORT}..."
-  adb -s "$DEVICE" reverse tcp:"$DEV_PORT" tcp:"$DEV_PORT" 2>/dev/null || true
-  echo -e "${GREEN}Reverse proxy active:${NC}"
-  adb -s "$DEVICE" reverse --list 2>/dev/null || true
-fi
-
-# ── 6. Uninstall old version ─────────────────────────────────────
+# ── 5. Uninstall old version ─────────────────────────────────────
 
 INSTALLED="$(adb -s "$DEVICE" shell pm list packages "$PACKAGE" 2>/dev/null || true)"
 if [[ -n "$INSTALLED" ]]; then
@@ -101,7 +90,7 @@ if [[ -n "$INSTALLED" ]]; then
   sleep 1
 fi
 
-# ── 7. Install new APK ───────────────────────────────────────────
+# ── 6. Install new APK ───────────────────────────────────────────
 
 echo "Installing..."
 if adb -s "$DEVICE" install -r "$APK" 2>&1; then
@@ -117,6 +106,14 @@ else
     exit 1
   fi
 fi
+
+# ── 7. Reverse port forwarding (dev server) ────────────────────
+
+echo "Setting up reverse proxy :${DEV_PORT} -> device:${DEV_PORT}..."
+adb -s "$DEVICE" reverse tcp:"$DEV_PORT" tcp:"$DEV_PORT" 2>/dev/null && \
+  echo -e "${GREEN}Reverse proxy active:${NC}" && \
+  adb -s "$DEVICE" reverse --list 2>/dev/null || \
+  echo -e "${YELLOW}Reverse proxy failed (non-fatal)${NC}"
 
 # ── 8. Launch the app ────────────────────────────────────────────
 
