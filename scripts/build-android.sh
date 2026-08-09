@@ -269,8 +269,21 @@ fi
 
 configure_android_release_signing "${build_args[@]}"
 
+set +e
 bun tauri android build "${build_args[@]}"
+BUILD_EXIT=$?
+set -e
 
 echo
 echo "APK output(s):"
 find src-tauri/gen/android/app/build/outputs -name "*.apk" -print 2>/dev/null || true
+
+if [[ $BUILD_EXIT -eq 0 && -t 0 ]]; then
+  echo
+  read -rp "Deploy to Android device? [Y/n] " answer
+  if [[ -z "$answer" || "$answer" =~ ^[Yy] ]]; then
+    scripts/adb-deploy.sh "$@"
+  fi
+fi
+
+exit $BUILD_EXIT
