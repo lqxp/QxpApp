@@ -261,6 +261,15 @@ jobs:
           path: release-assets
           merge-multiple: true
 
+      - name: Generate Nix flake
+        shell: bash
+        env:
+          APP_VERSION: ${{ needs.prepare-release.outputs.app_version }}
+        run: |
+          chmod +x scripts/generate-nix-flake.sh
+          scripts/generate-nix-flake.sh "$APP_VERSION" > "release-assets/QxChat_${APP_VERSION}_flake.nix"
+          echo "Generated release-assets/QxChat_${APP_VERSION}_flake.nix"
+
       - name: Publish release with all assets
         shell: bash
         env:
