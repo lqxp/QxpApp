@@ -231,6 +231,13 @@ if [[ ! -d src-tauri/gen/android || "${LQXP_FORCE_ANDROID_INIT:-}" == "1" ]]; th
   bun tauri android init
 fi
 
+# Allow cleartext HTTP for local dev (adb reverse → 127.0.0.1:4560)
+manifest="src-tauri/gen/android/app/src/main/AndroidManifest.xml"
+if [[ -f "$manifest" ]] && ! grep -q 'usesCleartextTraffic' "$manifest"; then
+  sed -i 's/<application/<application android:usesCleartextTraffic="true"/' "$manifest"
+  echo "Injected android:usesCleartextTraffic=true into AndroidManifest.xml"
+fi
+
 sync_android_launcher_icons
 
 local_properties="src-tauri/gen/android/local.properties"
