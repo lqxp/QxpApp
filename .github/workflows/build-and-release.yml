@@ -266,8 +266,74 @@ jobs:
         env:
           APP_VERSION: ${{ needs.prepare-release.outputs.app_version }}
         run: |
-          chmod +x scripts/generate-nix-flake.sh
-          scripts/generate-nix-flake.sh "$APP_VERSION" > "release-assets/QxChat_${APP_VERSION}_flake.nix"
+          cat > "release-assets/QxChat_${APP_VERSION}_flake.nix" << FLAKE
+          # QxChat ${APP_VERSION} — NixOS flake
+          # Drop this into your NixOS configuration to install QxChat.
+          #
+          # Usage (flake.nix):
+          #
+          #   {
+          #     inputs.qxchat.url = "github:lqxp/app/releases/download/v${APP_VERSION}/QxChat_${APP_VERSION}_flake.nix";
+          #     ...
+          #   }
+          #
+          # Then in your NixOS module:
+          #
+          #   { inputs, ... }: {
+          #     imports = [ inputs.qxchat.nixosModules.default ];
+          #     nixpkgs.overlays = [ inputs.qxchat.overlays.default ];
+          #     programs.qxchat.enable = true;
+          #   }
+
+          {
+            description = "QxChat ${APP_VERSION} — NixOS flake";
+
+            inputs = {
+              nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+
+              qxchat-src = {
+                url = "git+https://github.com/lqxp/app.git?ref=v${APP_VERSION}&submodules=1";
+                flake = false;
+              };
+            };
+
+            outputs =
+              { self, nixpkgs, qxchat-src }:
+              let
+                systems = [
+                  "x86_64-linux"
+                  "aarch64-linux"
+                ];
+
+                forAllSystems = nixpkgs.lib.genAttrs systems;
+
+                qxchatPackage =
+                  { system }:
+                  let
+                    pkgs = import nixpkgs {
+                      inherit system;
+                      config.allowUnfree = true;
+                    };
+                  in
+                  pkgs.callPackage "\${qxchat-src}/nix/qxchat.nix" { };
+              in
+              {
+                nixosModules.default = import "\${qxchat-src}/nix/module.nix";
+
+                overlays.default = final: prev: {
+                  qxchat = prev.callPackage "\${qxchat-src}/nix/qxchat.nix" { };
+                };
+
+                packages = forAllSystems (
+                  system:
+                  {
+                    default = qxchatPackage { inherit system; };
+                    qxchat = qxchatPackage { inherit system; };
+                  }
+                );
+              };
+          }
+          FLAKE
           echo "Generated release-assets/QxChat_${APP_VERSION}_flake.nix"
 
       - name: Publish release with all assets
