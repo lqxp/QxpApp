@@ -39,7 +39,7 @@
 
 let
   pname = "qxchat";
-  version = "1.14.1";
+  version = "1.15.1";
 
   webkitgtk = webkitgtk_4_1.override {
     enableExperimental = true;
@@ -229,7 +229,7 @@ rustPlatform.buildRustPackage {
 
   meta = {
     description = "QxChat desktop client (Tauri)";
-    homepage = "https://github.com/lqxp/client-tauri";
+    homepage = "https://github.com/lqxp/client";
     license = lib.licenses.mit;
     platforms = lib.platforms.linux;
     mainProgram = "qxchat";
