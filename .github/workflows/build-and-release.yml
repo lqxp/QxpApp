@@ -21,12 +21,8 @@ env:
   QXP_SERVER_ORIGIN: ${{ secrets.QXP_SERVER_ORIGIN }}
   QXP_API_BASE_URL: ${{ secrets.QXP_API_BASE_URL }}
   QXP_WS_URL: ${{ secrets.QXP_WS_URL }}
-  QXP_TURN_URLS: ${{ secrets.QXP_TURN_URLS }}
-  QXP_TURN_USERNAME: ${{ secrets.QXP_TURN_USERNAME }}
-  QXP_RELAY_ONLY: ${{ secrets.QXP_RELAY_ONLY }}
   QXP_CALLS_ENABLED: ${{ secrets.QXP_CALLS_ENABLED }}
   QXP_CALLS_UNAVAILABLE_REASON: ${{ secrets.QXP_CALLS_UNAVAILABLE_REASON }}
-  QXP_TURN_CREDENTIAL: ${{ secrets.QXP_TURN_CREDENTIAL }}
 
 jobs:
   prepare-release:
@@ -160,10 +156,6 @@ jobs:
           QXP_SERVER_ORIGIN: ${{ env.QXP_SERVER_ORIGIN }}
           QXP_API_BASE_URL: ${{ env.QXP_API_BASE_URL }}
           QXP_WS_URL: ${{ env.QXP_WS_URL }}
-          QXP_TURN_URLS: ${{ env.QXP_TURN_URLS }}
-          QXP_TURN_USERNAME: ${{ env.QXP_TURN_USERNAME }}
-          QXP_TURN_CREDENTIAL: ${{ env.QXP_TURN_CREDENTIAL }}
-          QXP_RELAY_ONLY: ${{ env.QXP_RELAY_ONLY }}
           QXP_CALLS_ENABLED: ${{ env.QXP_CALLS_ENABLED }}
           QXP_CALLS_UNAVAILABLE_REASON: ${{ env.QXP_CALLS_UNAVAILABLE_REASON }}
         run: |
@@ -201,6 +193,15 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
 
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('src-tauri/tauri.conf.json', 'src-tauri/Cargo.toml', 'package.json') }}
+          restore-keys: gradle-${{ runner.os }}-
+
       - name: Configure Android signing
         shell: bash
         run: |
@@ -231,17 +232,13 @@ jobs:
           QXP_SERVER_ORIGIN: ${{ env.QXP_SERVER_ORIGIN }}
           QXP_API_BASE_URL: ${{ env.QXP_API_BASE_URL }}
           QXP_WS_URL: ${{ env.QXP_WS_URL }}
-          QXP_TURN_URLS: ${{ env.QXP_TURN_URLS }}
-          QXP_TURN_USERNAME: ${{ env.QXP_TURN_USERNAME }}
-          QXP_TURN_CREDENTIAL: ${{ env.QXP_TURN_CREDENTIAL }}
-          QXP_RELAY_ONLY: ${{ env.QXP_RELAY_ONLY }}
           QXP_CALLS_ENABLED: ${{ env.QXP_CALLS_ENABLED }}
           QXP_CALLS_UNAVAILABLE_REASON: ${{ env.QXP_CALLS_UNAVAILABLE_REASON }}
           EXPECTED_API_BASE_URL: https://qxch.at
           APP_VERSION: ${{ needs.prepare-release.outputs.app_version }}
         run: |
           chmod +x scripts/build-android-ci.sh
-          nix develop --command env APP_VERSION="$APP_VERSION" EXPECTED_API_BASE_URL="$EXPECTED_API_BASE_URL" QXP_RUNTIME_CONFIG_URL="$QXP_RUNTIME_CONFIG_URL" QXP_SERVER_ORIGIN="$QXP_SERVER_ORIGIN" QXP_API_BASE_URL="$QXP_API_BASE_URL" QXP_WS_URL="$QXP_WS_URL" QXP_TURN_URLS="$QXP_TURN_URLS" QXP_TURN_USERNAME="$QXP_TURN_USERNAME" QXP_TURN_CREDENTIAL="$QXP_TURN_CREDENTIAL" QXP_RELAY_ONLY="$QXP_RELAY_ONLY" QXP_CALLS_ENABLED="$QXP_CALLS_ENABLED" QXP_CALLS_UNAVAILABLE_REASON="$QXP_CALLS_UNAVAILABLE_REASON" scripts/build-android-ci.sh
+          nix develop --command env APP_VERSION="$APP_VERSION" EXPECTED_API_BASE_URL="$EXPECTED_API_BASE_URL" QXP_RUNTIME_CONFIG_URL="$QXP_RUNTIME_CONFIG_URL" QXP_SERVER_ORIGIN="$QXP_SERVER_ORIGIN" QXP_API_BASE_URL="$QXP_API_BASE_URL" QXP_WS_URL="$QXP_WS_URL" QXP_CALLS_ENABLED="$QXP_CALLS_ENABLED" QXP_CALLS_UNAVAILABLE_REASON="$QXP_CALLS_UNAVAILABLE_REASON" scripts/build-android-ci.sh
 
       - name: Upload Android artifacts
         uses: actions/upload-artifact@v4
@@ -257,6 +254,7 @@ jobs:
       - prepare-release
       - build-tauri
       - build-android
+      - build-ios
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -267,6 +265,81 @@ jobs:
           pattern: qxchat-*
           path: release-assets
           merge-multiple: true
+
+      - name: Generate Nix flake
+        shell: bash
+        env:
+          APP_VERSION: ${{ needs.prepare-release.outputs.app_version }}
+        run: |
+          cat > "release-assets/QxChat_${APP_VERSION}_flake.nix" << FLAKE
+          # QxChat ${APP_VERSION} — NixOS flake
+          # Drop this into your NixOS configuration to install QxChat.
+          #
+          # Usage (flake.nix):
+          #
+          #   {
+          #     inputs.qxchat.url = "github:lqxp/app/releases/download/v${APP_VERSION}/QxChat_${APP_VERSION}_flake.nix";
+          #     ...
+          #   }
+          #
+          # Then in your NixOS module:
+          #
+          #   { inputs, ... }: {
+          #     imports = [ inputs.qxchat.nixosModules.default ];
+          #     nixpkgs.overlays = [ inputs.qxchat.overlays.default ];
+          #     programs.qxchat.enable = true;
+          #   }
+
+          {
+            description = "QxChat ${APP_VERSION} — NixOS flake";
+
+            inputs = {
+              nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+
+              qxchat-src = {
+                url = "git+https://github.com/lqxp/app.git?ref=v${APP_VERSION}&submodules=1";
+                flake = false;
+              };
+            };
+
+            outputs =
+              { self, nixpkgs, qxchat-src }:
+              let
+                systems = [
+                  "x86_64-linux"
+                  "aarch64-linux"
+                ];
+
+                forAllSystems = nixpkgs.lib.genAttrs systems;
+
+                qxchatPackage =
+                  { system }:
+                  let
+                    pkgs = import nixpkgs {
+                      inherit system;
+                      config.allowUnfree = true;
+                    };
+                  in
+                  pkgs.callPackage "\${qxchat-src}/nix/qxchat.nix" { };
+              in
+              {
+                nixosModules.default = import "\${qxchat-src}/nix/module.nix";
+
+                overlays.default = final: prev: {
+                  qxchat = prev.callPackage "\${qxchat-src}/nix/qxchat.nix" { };
+                };
+
+                packages = forAllSystems (
+                  system:
+                  {
+                    default = qxchatPackage { inherit system; };
+                    qxchat = qxchatPackage { inherit system; };
+                  }
+                );
+              };
+          }
+          FLAKE
+          echo "Generated release-assets/QxChat_${APP_VERSION}_flake.nix"
 
       - name: Publish release with all assets
         shell: bash
@@ -335,129 +408,53 @@ jobs:
             --notes "$release_notes"
           gh release edit "$TAG_NAME" --draft=false --latest
 
-  # build-ios:
-  #   name: Build iOS IPA
-  #   needs: prepare-release
-  #   runs-on: macos-15
-  #   permissions:
-  #     contents: write
-  #   steps:
-  #     - name: Checkout repository
-  #       uses: actions/checkout@v4
-  #       with:
-  #         submodules: recursive
+  build-ios:
+    name: Build iOS (unsigned)
+    needs: prepare-release
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-  #     - name: Setup Bun
-  #       uses: oven-sh/setup-bun@v2
-  #       with:
-  #         bun-version: 1.3.12
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.12'
 
-  #     - name: Install Rust stable
-  #       uses: dtolnay/rust-toolchain@stable
-  #       with:
-  #         targets: aarch64-apple-ios,x86_64-apple-ios,aarch64-apple-ios-sim
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
 
-  #     - name: Cache Rust build
-  #       uses: swatinem/rust-cache@v2
-  #       with:
-  #         workspaces: src-tauri -> target
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
 
-  #     - name: Install CocoaPods
-  #       run: |
-  #         if ! command -v pod >/dev/null 2>&1; then
-  #           brew install cocoapods
-  #         fi
+      - name: Build unsigned IPA
+        shell: bash
+        env:
+          APP_VERSION: ${{ needs.prepare-release.outputs.app_version }}
+          QXP_RUNTIME_CONFIG_URL: ${{ env.QXP_RUNTIME_CONFIG_URL }}
+          QXP_SERVER_ORIGIN: ${{ env.QXP_SERVER_ORIGIN }}
+          QXP_API_BASE_URL: ${{ env.QXP_API_BASE_URL }}
+          QXP_WS_URL: ${{ env.QXP_WS_URL }}
+          QXP_CALLS_ENABLED: ${{ env.QXP_CALLS_ENABLED }}
+          QXP_CALLS_UNAVAILABLE_REASON: ${{ env.QXP_CALLS_UNAVAILABLE_REASON }}
+          EXPECTED_API_BASE_URL: https://qxch.at
+        run: |
+          chmod +x scripts/build-ios-ci.sh
+          scripts/build-ios-ci.sh
 
-  #     - name: Configure iOS signing
-  #       shell: bash
-  #       run: |
-  #         set -euo pipefail
-
-  #         if [ -z "${APPLE_DEVELOPMENT_TEAM}" ] \
-  #           || [ -z "${APPLE_CERTIFICATE_P12_BASE64}" ] \
-  #           || [ -z "${APPLE_CERTIFICATE_PASSWORD}" ] \
-  #           || [ -z "${APPLE_PROVISIONING_PROFILE_BASE64}" ]; then
-  #           echo "::error::Missing iOS signing secrets. Configure APPLE_DEVELOPMENT_TEAM, APPLE_CERTIFICATE_P12_BASE64, APPLE_CERTIFICATE_PASSWORD and APPLE_PROVISIONING_PROFILE_BASE64."
-  #           exit 1
-  #         fi
-
-  #         decode_base64() {
-  #           base64 --decode 2>/dev/null || base64 -D
-  #         }
-
-  #         certificate_path="$RUNNER_TEMP/apple_certificate.p12"
-  #         profile_path="$RUNNER_TEMP/qxchat.mobileprovision"
-  #         profile_plist="$RUNNER_TEMP/profile.plist"
-  #         keychain_path="$RUNNER_TEMP/app-signing.keychain-db"
-
-  #         printf '%s' "$APPLE_CERTIFICATE_P12_BASE64" | decode_base64 > "$certificate_path"
-  #         printf '%s' "$APPLE_PROVISIONING_PROFILE_BASE64" | decode_base64 > "$profile_path"
-
-  #         security create-keychain -p "$APPLE_KEYCHAIN_PASSWORD" "$keychain_path"
-  #         security set-keychain-settings -lut 21600 "$keychain_path"
-  #         security unlock-keychain -p "$APPLE_KEYCHAIN_PASSWORD" "$keychain_path"
-  #         security import "$certificate_path" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain_path"
-  #         security set-key-partition-list -S apple-tool:,apple: -s -k "$APPLE_KEYCHAIN_PASSWORD" "$keychain_path"
-  #         security list-keychain -d user -s "$keychain_path"
-
-  #         security cms -D -i "$profile_path" > "$profile_plist"
-  #         profile_uuid=$(/usr/libexec/PlistBuddy -c 'Print UUID' "$profile_plist")
-  #         mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
-  #         cp "$profile_path" "$HOME/Library/MobileDevice/Provisioning Profiles/$profile_uuid.mobileprovision"
-  #       env:
-  #         APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
-  #         APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
-  #         APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-  #         APPLE_PROVISIONING_PROFILE_BASE64: ${{ secrets.APPLE_PROVISIONING_PROFILE_BASE64 }}
-  #         APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD || github.run_id }}
-
-  #     - name: Install dependencies
-  #       run: |
-  #         bun install --frozen-lockfile
-  #         (cd client && bun install --frozen-lockfile)
-
-  #     - name: Generate iOS project
-  #       run: bun run ios:init
-
-  #     - name: Build signed iOS IPA
-  #       shell: bash
-  #       run: |
-  #         set -euo pipefail
-
-  #         args=(ios build --export-method "$IOS_EXPORT_METHOD")
-  #         if [ -n "${IOS_BUILD_NUMBER:-}" ]; then
-  #           args+=(--build-number "$IOS_BUILD_NUMBER")
-  #         fi
-
-  #         bun tauri "${args[@]}"
-  #       env:
-  #         APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
-  #         IOS_EXPORT_METHOD: ${{ inputs.ios_export_method || 'app-store-connect' }}
-  #         IOS_BUILD_NUMBER: ${{ inputs.ios_build_number || github.run_number }}
-  #         QXP_RUNTIME_CONFIG_URL: ${{ env.QXP_RUNTIME_CONFIG_URL }}
-  #         QXP_SERVER_ORIGIN: ${{ env.QXP_SERVER_ORIGIN }}
-  #         QXP_API_BASE_URL: ${{ env.QXP_API_BASE_URL }}
-  #         QXP_WS_URL: ${{ env.QXP_WS_URL }}
-  #         QXP_TURN_URLS: ${{ env.QXP_TURN_URLS }}
-  #         QXP_TURN_USERNAME: ${{ env.QXP_TURN_USERNAME }}
-  #         QXP_TURN_CREDENTIAL: ${{ env.QXP_TURN_CREDENTIAL }}
-  #         QXP_RELAY_ONLY: ${{ env.QXP_RELAY_ONLY }}
-  #         QXP_CALLS_ENABLED: ${{ env.QXP_CALLS_ENABLED }}
-  #         QXP_CALLS_UNAVAILABLE_REASON: ${{ env.QXP_CALLS_UNAVAILABLE_REASON }}
-
-  #     - name: Upload iOS artifacts
-  #       uses: actions/upload-artifact@v4
-  #       with:
-  #         name: qxchat-ios
-  #         if-no-files-found: error
-  #         path: src-tauri/gen/apple/build/arm64/*.ipa
-
-  #     - name: Upload iOS release assets
-  #       uses: softprops/action-gh-release@v2
-  #       with:
-  #         tag_name: ${{ needs.prepare-release.outputs.tag_name }}
-  #         name: QxChat v${{ needs.prepare-release.outputs.app_version }}
-  #         body: |
-  #           Build automatique GitHub Actions pour la version ${{ needs.prepare-release.outputs.app_version }}.
-  #         generate_release_notes: true
-  #         files: src-tauri/gen/apple/build/arm64/*.ipa
+      - name: Upload iOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: qxchat-ios-unsigned
+          if-no-files-found: error
+          path: |
+            ${{ env.IPA_PATH }}
+            ${{ env.APP_ZIP }}

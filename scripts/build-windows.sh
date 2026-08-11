@@ -7,14 +7,26 @@ if [ "${QXP_WINDOWS_BUILD_SHELL:-}" != "1" ]; then
   exec nix develop .#windows -c env QXP_WINDOWS_BUILD_SHELL=1 bash "$0" "$@"
 fi
 
-export QXP_SERVER_ORIGIN="${QXP_SERVER_ORIGIN:-https://qxch.at}"
-export QXP_API_BASE_URL="${QXP_API_BASE_URL:-https://qxch.at}"
-export QXP_WS_URL="${QXP_WS_URL:-wss://qxch.at/ws}"
-export QXP_CALLS_ENABLED="${QXP_CALLS_ENABLED:-true}"
-export QXP_RELAY_ONLY="${QXP_RELAY_ONLY:-true}"
-export QXP_TURN_URLS="${QXP_TURN_URLS:-turn:relay-01.qxch.at:3478?transport=udp,turn:relay-01.qxch.at:3478?transport=tcp,turns:relay-01.qxch.at:5349?transport=tcp}"
-export QXP_TURN_USERNAME="${QXP_TURN_USERNAME:-qxp-turn}"
-export QXP_TURN_CREDENTIAL="${QXP_TURN_CREDENTIAL:-df64240e730e15fdfb75d6cff95367b95ed341bd98517544}"
+# Interactive: local dev or production?
+HAS_LOCAL_FLAG=false
+for arg in "$@"; do [[ "$arg" == "--local" ]] && HAS_LOCAL_FLAG=true; done
+
+if [[ -t 0 ]] && ! $HAS_LOCAL_FLAG; then
+  echo -e "\033[1;36mBuild target:\033[0m"
+  echo "  [1] Production  (from files/config.custom.toml)"
+  echo "  [2] Local dev   (http://127.0.0.1:4560)"
+  read -rp "Choose [1/2] (default: 1): " choice
+  if [[ "$choice" == "2" ]]; then
+    export QXP_SERVER_ORIGIN="http://127.0.0.1:4560"
+    export QXP_API_BASE_URL="http://127.0.0.1:4560"
+    export QXP_WS_URL="ws://127.0.0.1:4560/ws"
+    echo -e "\033[1;33mLocal dev mode\033[0m"
+  fi
+fi
+
+# Production values come from files/config.custom.toml (via sync-runtime-config.mjs).
+# No hardcoded env vars — the sync script handles the full chain: TOML → fallback.
+# Only set defaults if running outside tauri build (e.g. direct xcodebuild).
 
 export CARGO_BUILD_TARGET=x86_64-pc-windows-gnu
 export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
@@ -56,15 +68,35 @@ export CXX_x86_64_pc_windows_gnu=x86_64-w64-mingw32-g++
 export AR_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ar
 export RANLIB_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ranlib
 
-bundle_args=(--bundles nsis)
-for arg in "$@"; do
-  case "$arg" in
-    --bundles|--bundles=*)
-      bundle_args=()
-      break
-      ;;
-  esac
-done
+# Statically link mingw runtime so the .exe runs without extra DLLs on Windows
+export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS="-C target-feature=+crt-static ${CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS:-}"
 
 bun install --no-save
-bun tauri build --target x86_64-pc-windows-gnu "${bundle_args[@]}" "$@"
+bun tauri build --target x86_64-pc-windows-gnu "$@"
+BUILD_EXIT=$?
+
+# ── Find built artifacts ─────────────────────────────────────────
+
+find_exe() {
+  echo "src-tauri/target/x86_64-pc-windows-gnu/release/qxchat.exe"
+}
+
+if [[ $BUILD_EXIT -eq 0 && -t 0 ]]; then
+  ARTIFACT="$(find_exe)"
+  if [[ -n "$ARTIFACT" && -f "$ARTIFACT" ]]; then
+    echo
+    echo -e "\033[1;33mUpload to catbox.moe? (15s timeout) [y/N] \033[0m"
+    read -rt 15 answer || answer=""
+    if [[ "$answer" =~ ^[Yy] ]]; then
+      echo "Uploading $(basename "$ARTIFACT")..."
+      URL="$(bun run scripts/catbox-uploader.mts --file "$ARTIFACT" 2>/dev/null || true)"
+      if [[ -n "$URL" && "$URL" == https://files.catbox.moe/* ]]; then
+        echo -e "\033[0;32mDone: $URL\033[0m"
+      else
+        echo -e "\033[0;31mUpload failed\033[0m"
+      fi
+    fi
+  fi
+fi
+
+exit $BUILD_EXIT
