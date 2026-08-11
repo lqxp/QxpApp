@@ -80,3 +80,30 @@ done
 
 bun install --no-save
 bun tauri build --target x86_64-pc-windows-gnu "${bundle_args[@]}" "$@"
+BUILD_EXIT=$?
+
+# ── Find built artifacts ─────────────────────────────────────────
+
+find_exe() {
+  find src-tauri/target/x86_64-pc-windows-gnu/release/bundle -name "*.exe" -o -name "*.msi" 2>/dev/null | head -n1
+}
+
+if [[ $BUILD_EXIT -eq 0 && -t 0 ]]; then
+  ARTIFACT="$(find_exe)"
+  if [[ -n "$ARTIFACT" && -f "$ARTIFACT" ]]; then
+    echo
+    echo -e "\033[1;33mUpload to catbox.moe? (15s timeout) [y/N] \033[0m"
+    read -rt 15 answer || answer=""
+    if [[ "$answer" =~ ^[Yy] ]]; then
+      echo "Uploading $(basename "$ARTIFACT")..."
+      URL="$(bun run scripts/catbox-uploader.mts --file "$ARTIFACT" 2>/dev/null || true)"
+      if [[ -n "$URL" && "$URL" == https://files.catbox.moe/* ]]; then
+        echo -e "\033[0;32mDone: $URL\033[0m"
+      else
+        echo -e "\033[0;31mUpload failed\033[0m"
+      fi
+    fi
+  fi
+fi
+
+exit $BUILD_EXIT
