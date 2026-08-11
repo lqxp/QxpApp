@@ -28,13 +28,13 @@ fn hide_window(_window: &tauri::Window) {
 }
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn check_updates_from_tray(app: tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
+        let _ = window.unminimize();
         let _ = window.set_focus();
-        let _ = window.emit("qx:check-updates", ());
     }
+    let _ = app.emit("qx:check-updates", ());
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
