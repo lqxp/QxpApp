@@ -120,6 +120,7 @@
             export CXX_x86_64_pc_windows_gnu=x86_64-w64-mingw32-g++
             export AR_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ar
             export RANLIB_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ranlib
+            export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS="-C target-feature=+crt-static"
             mingw_lib="${pkgs.pkgsCross.mingwW64.stdenv.cc.cc}/x86_64-w64-mingw32/lib"
             pthread_lib="${pkgs.pkgsCross.mingwW64.windows.pthreads}/lib"
             export LIBRARY_PATH="$pthread_lib:$mingw_lib:''${LIBRARY_PATH:-}"

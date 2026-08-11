@@ -1,0 +1,32 @@
+# QxChat runtime configuration
+# This file is read by scripts/sync-runtime-config.mjs during local builds.
+# CI builds use environment variables (GitHub Secrets) to override these values.
+# The generated runtime-config.js is embedded in the Android APK / desktop bundle.
+
+[api]
+publicDomain = "qxch.at"
+
+[rtc]
+relayOnly = true
+defaultTurnServer = "google-stun"
+
+[[rtc.servers]]
+id = "qxp-turn"
+label = "QXP Server"
+hint = "Self-hosted relay on our infrastructure — may be unstable under load. No IP exposed, everything goes through our relay."
+turnUrls = [
+    "turn:relay-01.qxch.at:3478?transport=udp",
+    "turn:relay-01.qxch.at:3478?transport=tcp",
+    "turns:relay-01.qxch.at:5349?transport=tcp",
+]
+turnUsername = "qxp-turn"
+turnCredential = "ee74bf0f9bf21e74d98f2d85176c9b5cb85ffde977ec80e8"
+
+[[rtc.servers]]
+id = "google-stun"
+label = "Google STUN"
+hint = "Google public STUN — very stable and fast, but ⚠️ your IPs are exposed (no anonymous relay). Only useful on local networks or for testing."
+turnUrls = [
+    "stun:stun.l.google.com:19302",
+    "stun:stun1.l.google.com:19302",
+]

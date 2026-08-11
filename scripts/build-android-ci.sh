@@ -59,6 +59,37 @@ rm -f client/dist/validate-runtime-config.cjs
 
 mkdir -p src-tauri/gen/android/app/src/main/res
 cp -R src-tauri/icons/android/. src-tauri/gen/android/app/src/main/res/
+
+# ── Gradle Maven mirrors (workaround for CI 403 from Maven Central) ─
+mkdir -p "$HOME/.gradle/init.d"
+cat > "$HOME/.gradle/init.d/ci-mirrors.gradle" <<'GRADLE'
+beforeSettings { settings ->
+  settings.pluginManagement.repositories {
+    maven { url "https://dl.google.com/dl/android/maven2/" }
+    maven { url "https://repo1.maven.org/maven2/" }
+    google()
+    mavenCentral()
+    gradlePluginPortal()
+  }
+}
+allprojects {
+  buildscript {
+    repositories {
+      maven { url "https://dl.google.com/dl/android/maven2/" }
+      maven { url "https://repo1.maven.org/maven2/" }
+      google()
+      mavenCentral()
+    }
+  }
+  repositories {
+    maven { url "https://dl.google.com/dl/android/maven2/" }
+    maven { url "https://repo1.maven.org/maven2/" }
+    google()
+    mavenCentral()
+  }
+}
+GRADLE
+
 bun tauri android build --apk --target aarch64
 
 apk="$(find src-tauri/gen/android/app/build/outputs/apk -path '*/release/*.apk' -type f | sort | head -n1)"
