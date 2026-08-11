@@ -14,11 +14,17 @@ async function uploadToCatbox(filePath: string): Promise<string> {
         throw new Error(`File not found: ${filePath}`);
     }
 
-    const archive = new Bun.Archive({
-        [file.name ?? "file"]: file,
-    });
-
+    const fileName = filePath.split("/").pop() ?? "file";
     const archivePath = `${filePath}.tar.gz`;
+
+    const archive = new Bun.Archive(
+        {
+            [fileName]: file,
+        },
+        {
+            compress: "gzip",
+        },
+    );
 
     await Bun.write(archivePath, archive);
 
@@ -38,7 +44,7 @@ async function uploadToCatbox(filePath: string): Promise<string> {
 
         if (!response.ok) {
             throw new Error(
-                `Catbox returned HTTP ${response.status}: ${result}`
+                `Catbox returned HTTP ${response.status}: ${result}`,
             );
         }
 
@@ -63,7 +69,7 @@ try {
     console.log(await uploadToCatbox(filePath));
 } catch (error) {
     console.error(
-        error instanceof Error ? error.message : String(error)
+        error instanceof Error ? error.message : String(error),
     );
 
     process.exit(1);
