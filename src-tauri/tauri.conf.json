@@ -29,7 +29,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IGF1dG9tYXRpYyB1cGRhdGUga2V5CmRXRTVkM0psZEdWa0lHTnZiVzFsYm5ROUlDMDZJa0ZVWlZORlVGVlNWRVZUUkU1RVFrVkZSVlJCVTBWVlZWQlBSVlJCVTBWVlZWQg==",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU1NEYyQzVGRUQwMjIzODQKUldTRUl3THRYeXhQNVRiVzN5T2xDL1h5RkR2LzJ6KzFYangwVjZ1UUcrT0J0NkFYWUx5SzJiUzAK",
       "endpoints": [
         "https://github.com/lqxp/app/releases/latest/download/latest.json"
       ]
