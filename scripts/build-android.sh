@@ -274,8 +274,21 @@ if [[ ${#build_args[@]} -eq 0 ]]; then
   build_args=(--apk --target aarch64)
 fi
 
-# Filter out our custom flags before passing to tauri/cargo
+# If not explicitly --local and interactive, ask
 LOCAL_DEV=false
+HAS_LOCAL_FLAG=false
+for arg in "${build_args[@]}"; do [[ "$arg" == "--local" ]] && HAS_LOCAL_FLAG=true; done
+if [[ -t 0 ]] && ! $HAS_LOCAL_FLAG; then
+  echo -e "\033[1;36mBuild target:\033[0m"
+  echo "  [1] Production  (from files/config.custom.toml)"
+  echo "  [2] Local dev   (http://127.0.0.1:4560)"
+  read -rp "Choose [1/2] (default: 1): " choice
+  if [[ "$choice" == "2" ]]; then
+    LOCAL_DEV=true
+  fi
+fi
+
+# Filter out our custom flags before passing to tauri/cargo
 tauri_args=()
 for arg in "${build_args[@]}"; do
   case "$arg" in

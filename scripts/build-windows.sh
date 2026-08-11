@@ -7,14 +7,26 @@ if [ "${QXP_WINDOWS_BUILD_SHELL:-}" != "1" ]; then
   exec nix develop .#windows -c env QXP_WINDOWS_BUILD_SHELL=1 bash "$0" "$@"
 fi
 
-export QXP_SERVER_ORIGIN="${QXP_SERVER_ORIGIN:-https://qxch.at}"
-export QXP_API_BASE_URL="${QXP_API_BASE_URL:-https://qxch.at}"
-export QXP_WS_URL="${QXP_WS_URL:-wss://qxch.at/ws}"
-export QXP_CALLS_ENABLED="${QXP_CALLS_ENABLED:-true}"
-export QXP_RELAY_ONLY="${QXP_RELAY_ONLY:-true}"
-export QXP_TURN_URLS="${QXP_TURN_URLS:-turn:relay-01.qxch.at:3478?transport=udp,turn:relay-01.qxch.at:3478?transport=tcp,turns:relay-01.qxch.at:5349?transport=tcp}"
-export QXP_TURN_USERNAME="${QXP_TURN_USERNAME:-qxp-turn}"
-export QXP_TURN_CREDENTIAL="${QXP_TURN_CREDENTIAL:-df64240e730e15fdfb75d6cff95367b95ed341bd98517544}"
+# Interactive: local dev or production?
+HAS_LOCAL_FLAG=false
+for arg in "$@"; do [[ "$arg" == "--local" ]] && HAS_LOCAL_FLAG=true; done
+
+if [[ -t 0 ]] && ! $HAS_LOCAL_FLAG; then
+  echo -e "\033[1;36mBuild target:\033[0m"
+  echo "  [1] Production  (from files/config.custom.toml)"
+  echo "  [2] Local dev   (http://127.0.0.1:4560)"
+  read -rp "Choose [1/2] (default: 1): " choice
+  if [[ "$choice" == "2" ]]; then
+    export QXP_SERVER_ORIGIN="http://127.0.0.1:4560"
+    export QXP_API_BASE_URL="http://127.0.0.1:4560"
+    export QXP_WS_URL="ws://127.0.0.1:4560/ws"
+    echo -e "\033[1;33mLocal dev mode\033[0m"
+  fi
+fi
+
+# Production values come from files/config.custom.toml (via sync-runtime-config.mjs).
+# No hardcoded env vars — the sync script handles the full chain: TOML → fallback.
+# Only set defaults if running outside tauri build (e.g. direct xcodebuild).
 
 export CARGO_BUILD_TARGET=x86_64-pc-windows-gnu
 export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc

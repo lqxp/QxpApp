@@ -4,7 +4,7 @@
 # The generated runtime-config.js is embedded in the Android APK / desktop bundle.
 
 [api]
-# publicDomain = "qxch.at"
+publicDomain = "qxch.at"
 
 [rtc]
 relayOnly = true
