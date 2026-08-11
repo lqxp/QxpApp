@@ -68,24 +68,17 @@ export CXX_x86_64_pc_windows_gnu=x86_64-w64-mingw32-g++
 export AR_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ar
 export RANLIB_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ranlib
 
-bundle_args=(--bundles nsis)
-for arg in "$@"; do
-  case "$arg" in
-    --bundles|--bundles=*)
-      bundle_args=()
-      break
-      ;;
-  esac
-done
+# Statically link mingw runtime so the .exe runs without extra DLLs on Windows
+export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS="-C target-feature=+crt-static ${CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS:-}"
 
 bun install --no-save
-bun tauri build --target x86_64-pc-windows-gnu "${bundle_args[@]}" "$@"
+bun tauri build --target x86_64-pc-windows-gnu "$@"
 BUILD_EXIT=$?
 
 # ── Find built artifacts ─────────────────────────────────────────
 
 find_exe() {
-  find src-tauri/target/x86_64-pc-windows-gnu/release/bundle -name "*.exe" -o -name "*.msi" 2>/dev/null | head -n1
+  echo "src-tauri/target/x86_64-pc-windows-gnu/release/qxchat.exe"
 }
 
 if [[ $BUILD_EXIT -eq 0 && -t 0 ]]; then
