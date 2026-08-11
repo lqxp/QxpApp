@@ -255,7 +255,7 @@ rustPlatform.buildRustPackage {
 
   meta = {
     description = "QxChat desktop client (Tauri)";
-    homepage = "https://github.com/lqxp/client-tauri";
+    homepage = "https://github.com/lqxp/client";
     license = lib.licenses.mit;
     platforms = lib.platforms.linux;
     mainProgram = "qxchat";

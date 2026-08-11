@@ -11,6 +11,8 @@
     "core:window:allow-start-dragging",
     "core:window:allow-toggle-maximize",
     "notification:default",
+    "updater:default",
+    "process:allow-restart",
     {
       "identifier": "opener:allow-open-url",
       "allow": [
