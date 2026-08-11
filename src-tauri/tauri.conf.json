@@ -4,10 +4,10 @@
   "version": "1.15.1",
   "identifier": "com.qxp.client",
   "build": {
-    "beforeDevCommand": "cd ../client && bun install --no-save && bun vite --host 0.0.0.0",
-    "beforeBuildCommand": "cd ../client && bun run build:tauri",
+    "beforeDevCommand": "cd client && bun install --no-save && bun vite --host 0.0.0.0",
+    "beforeBuildCommand": "cd client && bun run build:tauri",
     "devUrl": "http://localhost:4173/#/",
-    "frontendDist": "../../client/dist"
+    "frontendDist": "../client/dist"
   },
   "app": {
     "withGlobalTauri": true,
