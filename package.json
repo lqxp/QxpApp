@@ -1,6 +1,6 @@
 {
   "name": "qxchat",
-  "version": "1.15.0",
+  "version": "1.15.1",
   "description": "QxChat Client based on lqxp protocol",
   "type": "module",
   "packageManager": "bun@1.3.12",
