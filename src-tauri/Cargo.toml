@@ -1,6 +1,6 @@
 [package]
 name = "qxchat"
-version = "1.15.4"
+version = "1.15.5"
 description = "QxChat Client"
 authors = []
 license = "MIT"
