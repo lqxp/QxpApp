@@ -362,14 +362,14 @@ jobs:
           pub_date = datetime.datetime.now(datetime.timezone.utc).isoformat()
           
           platforms = {}
-          for sig_file in glob.glob("release-assets/*.sig"):
+          for sig_file in glob.glob("release-assets/**/*.sig", recursive=True):
               asset_name = os.path.basename(sig_file)[:-4]
               with open(sig_file, "r") as f:
                   sig_content = f.read().strip()
               
               url = f"https://github.com/{repo}/releases/download/{tag_name}/{asset_name}"
               
-              if "msi.zip" in asset_name or "nsis.zip" in asset_name:
+              if ".msi" in asset_name or ".exe" in asset_name or "nsis.zip" in asset_name or "msi.zip" in asset_name:
                   key = "windows-aarch64" if "arm64" in asset_name or "aarch64" in asset_name else "windows-x86_64"
                   platforms[key] = {"signature": sig_content, "url": url}
               elif ".app.tar.gz" in asset_name:
