@@ -369,7 +369,7 @@ jobs:
               
               url = f"https://github.com/{repo}/releases/download/{tag_name}/{asset_name}"
               
-              if "msi.zip" in asset_name or "nsis.zip" in asset_name:
+              if ".msi" in asset_name or ".exe" in asset_name or "nsis.zip" in asset_name or "msi.zip" in asset_name:
                   key = "windows-aarch64" if "arm64" in asset_name or "aarch64" in asset_name else "windows-x86_64"
                   platforms[key] = {"signature": sig_content, "url": url}
               elif ".app.tar.gz" in asset_name:
