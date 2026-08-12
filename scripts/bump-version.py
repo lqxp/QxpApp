@@ -365,7 +365,7 @@ def sync_lqxp_submodule(version: str) -> None:
     tag_name = f"v{version}"
     info(f"Syncing {LQXP_WEB_SUBMODULE} to {tag_name}")
     run_git(["fetch", "origin", "--tags"], cwd=LQXP_WEB_SUBMODULE)
-    run_git(["checkout", tag_name], cwd=LQXP_WEB_SUBMODULE)
+    run_git(["checkout", "-B", "main", tag_name], cwd=LQXP_WEB_SUBMODULE)
 
     if not has_changes(LQXP_SIBLING_DIR, ["web"]):
         info(f"{LQXP_SIBLING_DIR} already points at {tag_name}, nothing to push")
