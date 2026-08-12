@@ -69,7 +69,7 @@ let
         "--force"
       ];
 
-      hash = "sha256-oc9H/TyXRx/X8xdiGXjs9Wa6CodI2kaDi8XT84mDpns=";
+      hash = "sha256-QHeX8ygoUhJUlxfbnix9fSXcch8kBbKLIAwN44Gi5lw=";
     };
 
     buildPhase = ''
