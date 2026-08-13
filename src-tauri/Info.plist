@@ -6,5 +6,7 @@
     <string>LQXP Client needs camera access for calls and messaging features.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>LQXP Client needs microphone access for calls and voice messaging features.</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>LQXP Client needs screen recording access for screen sharing during calls.</string>
   </dict>
 </plist>
