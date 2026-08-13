@@ -478,6 +478,12 @@ jobs:
           virustotal_url="https://www.virustotal.com/gui/file-analysis/${analysis_id}"
           release_notes=$'Legitimacy is supremacy.\n'"${virustotal_url}"
 
+          # Delete existing release (and its assets) to avoid duplicate asset errors
+          if gh release view "$TAG_NAME" &>/dev/null; then
+            echo "Deleting existing release $TAG_NAME..."
+            gh release delete "$TAG_NAME" --yes
+          fi
+
           gh release create "$TAG_NAME" "${release_files[@]}" \
             --draft \
             --title "QxChat v${APP_VERSION}" \
