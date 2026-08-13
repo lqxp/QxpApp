@@ -2,9 +2,10 @@
 # Delete GitHub releases (and their assets) while keeping the git tags.
 #
 # Usage:
-#   scripts/clear-releases.sh                 # delete ALL releases
-#   scripts/clear-releases.sh v1.2.3          # delete a single release by tag
-#   scripts/clear-releases.sh --dry-run       # list what would be deleted
+#   scripts/clear-releases.sh                     # delete ALL releases
+#   scripts/clear-releases.sh v1.2.3              # delete a single release by tag
+#   scripts/clear-releases.sh --below 1.14        # delete releases older than 1.14
+#   scripts/clear-releases.sh --dry-run           # list what would be deleted
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -22,12 +23,25 @@ fi
 
 DRY_RUN=false
 TARGET=""
-for arg in "$@"; do
-  case "$arg" in
+BELOW=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
     --dry-run|-n) DRY_RUN=true ;;
-    *) TARGET="$arg" ;;
+    --below)
+      BELOW="$2"
+      shift
+      ;;
+    *) TARGET="$1" ;;
   esac
+  shift
 done
+
+# Convert a version like "v1.13.2" or "1.13.2" into a sortable zero-padded form.
+version_key() {
+  local v="$1"
+  v="${v#v}"
+  echo "$v" | awk -F. '{ printf "%04d.%04d.%04d", $1, $2, $3 }'
+}
 
 if [[ -n "$TARGET" ]]; then
   # Single release by tag
@@ -43,14 +57,28 @@ if [[ -n "$TARGET" ]]; then
     exit 1
   fi
 else
-  # All releases
+  # List releases
   TAGS="$(gh release list --repo "$REPO" --limit 1000 --json tagName -q '.[].tagName' 2>/dev/null || true)"
   if [[ -z "$TAGS" ]]; then
     echo "No releases found."
     exit 0
   fi
 
+  if [[ -n "$BELOW" ]]; then
+    BELOW_KEY="$(version_key "$BELOW")"
+  fi
+
   while IFS= read -r tag; do
+    [[ -z "$tag" ]] && continue
+
+    if [[ -n "$BELOW" ]]; then
+      TAG_KEY="$(version_key "$tag")"
+      # Skip if tag version is >= below threshold (keep newer releases)
+      if [[ "$TAG_KEY" > "$BELOW_KEY" || "$TAG_KEY" == "$BELOW_KEY" ]]; then
+        continue
+      fi
+    fi
+
     if $DRY_RUN; then
       echo "Would delete release: $tag"
     else
