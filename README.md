@@ -287,6 +287,12 @@ Native media permissions for macOS are declared in `src-tauri/Info.plist` for ca
 
 On Android, runtime permissions (camera, microphone, notifications, media/storage) are prompted natively through the `permissions` Tauri plugin (`src-tauri/src/permissions.rs` + `com.qxp.client.PermissionsPlugin`). The client triggers a single grouped permission request once the user reaches the home screen after login/unlock, instead of relying on the WebView, which does not reliably surface those prompts. The granted Android permission strings are declared in `src-tauri/gen/android/app/src/main/AndroidManifest.xml`.
 
+### Background keep-alive (Android)
+
+Android aggressively suspends WebViews and kills background activities, which would tear down the frontend WebSocket (the socket that receives new messages) and long-lived WebRTC calls. To keep the app alive in the background QxChat runs a native foreground service (`com.qxp.client.ForegroundService`) with a partial wake lock and a persistent notification, controlled through the `background` Tauri plugin (`src-tauri/src/background.rs` + `com.qxp.client.BackgroundPlugin`). It is started once the user reaches the home screen after login/unlock.
+
+Tauri exposes no foreground-service/background flag on Android (`backgroundThrottling` is documented as unsupported on Android). The native service is therefore the correct mechanism. The frontend WebSocket remains the sole owner of the QXP wire protocol and E2EE state (moving it to Rust would require reimplementing the encrypted message pipeline and WebRTC signaling); the native service guards the process so that socket survives.
+
 ## NixOS
 
 `flake.nix` include the Linux dependencies that Tauri expects on NixOS, including GTK, WebKitGTK 4.1, GLib, `libsoup_3`, `librsvg`, and the GIO networking module setup required by WebKit.
