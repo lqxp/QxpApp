@@ -79,7 +79,8 @@ jobs:
               src-tauri/target/release/bundle/appimage/*.AppImage
               src-tauri/target/release/bundle/deb/*.deb
               src-tauri/target/release/bundle/rpm/*.rpm
-              src-tauri/target/release/bundle/latest*.json
+              src-tauri/target/release/bundle/**/*.tar.gz
+              src-tauri/target/release/bundle/**/*.sig
           - platform_name: Windows-x64
             runner: windows-latest
             rust_targets: x86_64-pc-windows-msvc
@@ -99,10 +100,10 @@ jobs:
           - platform_name: macOS
             runner: macos-latest
             rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
-            args: --target universal-apple-darwin --bundles dmg
+            args: --target universal-apple-darwin --bundles app,dmg
             release_files: |
               src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
-              src-tauri/target/universal-apple-darwin/release/bundle/**/*.tar.gz
+              src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz
               src-tauri/target/universal-apple-darwin/release/bundle/**/*.sig
 
     steps:
@@ -360,6 +361,12 @@ jobs:
           tag_name = os.environ.get("TAG_NAME", f"v{version}")
           repo = os.environ.get("GH_REPO", "lqxp/app")
           pub_date = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        
+          print("=== ===")
+          all_sigs = glob.glob("release-assets/**/*.sig", recursive=True)
+          for s in all_sigs:
+              print(f"  {s}")
+          print(f"=== ===")
           
           platforms = {}
           for sig_file in glob.glob("release-assets/**/*.sig", recursive=True):
@@ -369,20 +376,33 @@ jobs:
               
               url = f"https://github.com/{repo}/releases/download/{tag_name}/{asset_name}"
               
+              print(f"== {asset_name} ==")
+              
+              # Windows: .msi, .exe, .nsis.zip, .msi.zip
               if ".msi" in asset_name or ".exe" in asset_name or "nsis.zip" in asset_name or "msi.zip" in asset_name:
                   key = "windows-aarch64" if "arm64" in asset_name or "aarch64" in asset_name else "windows-x86_64"
                   platforms[key] = {"signature": sig_content, "url": url}
-              elif ".app.tar.gz" in asset_name:
-                  if "aarch64" in asset_name:
+                  print(f"  -> {key}")
+              # macOS: .app.tar.gz, .app.zip, or app.zip
+              # Note: universal-apple-darwin produces "QxChat.app.tar.gz" or "QxChat_1.15.8_app.zip"
+              elif ".app.tar.gz" in asset_name or ".app.zip" in asset_name or "app.zip" in asset_name:
+                  if "aarch64" in asset_name and "x86_64" not in asset_name:
                       platforms["darwin-aarch64"] = {"signature": sig_content, "url": url}
-                  elif "universal" in asset_name:
-                      platforms["darwin-aarch64"] = {"signature": sig_content, "url": url}
+                      print(f"  -> darwin-aarch64")
+                  elif "x86_64" in asset_name and "aarch64" not in asset_name:
                       platforms["darwin-x86_64"] = {"signature": sig_content, "url": url}
+                      print(f"  -> darwin-x86_64")
                   else:
+                      platforms["darwin-aarch64"] = {"signature": sig_content, "url": url}
                       platforms["darwin-x86_64"] = {"signature": sig_content, "url": url}
-              elif ".AppImage.tar.gz" in asset_name:
+                      print(f"  -> darwin-aarch64 + darwin-x86_64")
+              # Linux: .AppImage or .AppImage.tar.gz
+              elif ".AppImage" in asset_name:
                   key = "linux-aarch64" if "arm64" in asset_name or "aarch64" in asset_name else "linux-x86_64"
                   platforms[key] = {"signature": sig_content, "url": url}
+                  print(f"  -> {key}")
+              else:
+                  print(f"  -> no match")
                   
           latest = {
               "version": version,
@@ -394,7 +414,7 @@ jobs:
           with open("release-assets/latest.json", "w") as f:
               json.dump(latest, f, indent=2)
           
-          print("Generated release-assets/latest.json:")
+          print("\release-assets/latest.json:")
           print(json.dumps(latest, indent=2))
 
       - name: Publish release with all assets
