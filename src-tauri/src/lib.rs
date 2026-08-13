@@ -5,6 +5,8 @@ use tauri::{
     Emitter, Manager,
 };
 
+pub mod permissions;
+
 #[cfg(any(
     target_os = "linux",
     target_os = "dragonfly",
@@ -42,7 +44,8 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_notification::init());
+        .plugin(tauri_plugin_notification::init())
+        .plugin(permissions::init());
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let builder = builder

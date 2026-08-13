@@ -285,6 +285,8 @@ With `"withGlobalTauri": true`, the bundled page can use Tauri guest APIs throug
 
 Native media permissions for macOS are declared in `src-tauri/Info.plist` for camera and microphone access used by calls or voice features in the remote web app. Speaker output does not require a separate Tauri permission.
 
+On Android, runtime permissions (camera, microphone, notifications, media/storage) are prompted natively through the `permissions` Tauri plugin (`src-tauri/src/permissions.rs` + `com.qxp.client.PermissionsPlugin`). The client triggers a single grouped permission request once the user reaches the home screen after login/unlock, instead of relying on the WebView, which does not reliably surface those prompts. The granted Android permission strings are declared in `src-tauri/gen/android/app/src/main/AndroidManifest.xml`.
+
 ## NixOS
 
 `flake.nix` include the Linux dependencies that Tauri expects on NixOS, including GTK, WebKitGTK 4.1, GLib, `libsoup_3`, `librsvg`, and the GIO networking module setup required by WebKit.
