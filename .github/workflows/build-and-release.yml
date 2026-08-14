@@ -69,7 +69,7 @@ jobs:
               src-tauri/target/release/bundle/appimage/*.AppImage
               src-tauri/target/release/bundle/deb/*.deb
               src-tauri/target/release/bundle/rpm/*.rpm
-              src-tauri/target/release/bundle/latest*.json
+              src-tauri/target/release/bundle/**/*.sig
           - platform_name: Linux-arm64
             runner: ubuntu-24.04-arm
             rust_targets: ''
@@ -78,28 +78,31 @@ jobs:
               src-tauri/target/release/bundle/appimage/*.AppImage
               src-tauri/target/release/bundle/deb/*.deb
               src-tauri/target/release/bundle/rpm/*.rpm
-              src-tauri/target/release/bundle/latest*.json
+              src-tauri/target/release/bundle/**/*.sig
           - platform_name: Windows-x64
             runner: windows-latest
             rust_targets: x86_64-pc-windows-msvc
             args: --target x86_64-pc-windows-msvc --bundles msi
             release_files: |
               src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
-              src-tauri/target/x86_64-pc-windows-msvc/release/bundle/latest*.json
+              src-tauri/target/x86_64-pc-windows-msvc/release/bundle/**/*.zip
+              src-tauri/target/x86_64-pc-windows-msvc/release/bundle/**/*.sig
           - platform_name: Windows-arm64
             runner: windows-latest
             rust_targets: aarch64-pc-windows-msvc
             args: --target aarch64-pc-windows-msvc --bundles msi
             release_files: |
               src-tauri/target/aarch64-pc-windows-msvc/release/bundle/msi/*.msi
-              src-tauri/target/aarch64-pc-windows-msvc/release/bundle/latest*.json
+              src-tauri/target/aarch64-pc-windows-msvc/release/bundle/**/*.zip
+              src-tauri/target/aarch64-pc-windows-msvc/release/bundle/**/*.sig
           - platform_name: macOS
             runner: macos-latest
             rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
-            args: --target universal-apple-darwin --bundles dmg
+            args: --target universal-apple-darwin --bundles app,dmg
             release_files: |
               src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
-              src-tauri/target/universal-apple-darwin/release/bundle/latest*.json
+              src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz
+              src-tauri/target/universal-apple-darwin/release/bundle/**/*.sig
 
     steps:
       - name: Checkout repository
@@ -152,6 +155,8 @@ jobs:
       - name: Build desktop bundle
         shell: bash
         env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           QXP_RUNTIME_CONFIG_URL: ${{ env.QXP_RUNTIME_CONFIG_URL }}
           QXP_SERVER_ORIGIN: ${{ env.QXP_SERVER_ORIGIN }}
           QXP_API_BASE_URL: ${{ env.QXP_API_BASE_URL }}
@@ -341,6 +346,75 @@ jobs:
           FLAKE
           echo "Generated release-assets/QxChat_${APP_VERSION}_flake.nix"
 
+      - name: Generate latest.json for Tauri updater
+        shell: python
+        env:
+          APP_VERSION: ${{ needs.prepare-release.outputs.app_version }}
+          TAG_NAME: ${{ needs.prepare-release.outputs.tag_name }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          import os, glob, json, datetime
+          
+          version = os.environ.get("APP_VERSION", "1.0.0")
+          tag_name = os.environ.get("TAG_NAME", f"v{version}")
+          repo = os.environ.get("GH_REPO", "lqxp/app")
+          pub_date = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        
+          print("=== ===")
+          all_sigs = glob.glob("release-assets/**/*.sig", recursive=True)
+          for s in all_sigs:
+              print(f"  {s}")
+          print(f"=== ===")
+          
+          platforms = {}
+          for sig_file in glob.glob("release-assets/**/*.sig", recursive=True):
+              asset_name = os.path.basename(sig_file)[:-4]
+              with open(sig_file, "r") as f:
+                  sig_content = f.read().strip()
+              
+              url = f"https://github.com/{repo}/releases/download/{tag_name}/{asset_name}"
+              
+              print(f"== {asset_name} ==")
+              
+              # Windows: .msi, .exe, .nsis.zip, .msi.zip
+              if ".msi" in asset_name or ".exe" in asset_name or "nsis.zip" in asset_name or "msi.zip" in asset_name:
+                  key = "windows-aarch64" if "arm64" in asset_name or "aarch64" in asset_name else "windows-x86_64"
+                  platforms[key] = {"signature": sig_content, "url": url}
+                  print(f"  -> {key}")
+              # macOS: .app.tar.gz, .app.zip, or app.zip
+              # Note: universal-apple-darwin produces "QxChat.app.tar.gz" or "QxChat_1.15.8_app.zip"
+              elif ".app.tar.gz" in asset_name or ".app.zip" in asset_name or "app.zip" in asset_name:
+                  if "aarch64" in asset_name and "x86_64" not in asset_name:
+                      platforms["darwin-aarch64"] = {"signature": sig_content, "url": url}
+                      print(f"  -> darwin-aarch64")
+                  elif "x86_64" in asset_name and "aarch64" not in asset_name:
+                      platforms["darwin-x86_64"] = {"signature": sig_content, "url": url}
+                      print(f"  -> darwin-x86_64")
+                  else:
+                      platforms["darwin-aarch64"] = {"signature": sig_content, "url": url}
+                      platforms["darwin-x86_64"] = {"signature": sig_content, "url": url}
+                      print(f"  -> darwin-aarch64 + darwin-x86_64")
+              # Linux: .AppImage or .AppImage.tar.gz
+              elif ".AppImage" in asset_name:
+                  key = "linux-aarch64" if "arm64" in asset_name or "aarch64" in asset_name else "linux-x86_64"
+                  platforms[key] = {"signature": sig_content, "url": url}
+                  print(f"  -> {key}")
+              else:
+                  print(f"  -> no match")
+                  
+          latest = {
+              "version": version,
+              "notes": f"Release v{version}",
+              "pub_date": pub_date,
+              "platforms": platforms
+          }
+          
+          with open("release-assets/latest.json", "w") as f:
+              json.dump(latest, f, indent=2)
+          
+          print("\release-assets/latest.json:")
+          print(json.dumps(latest, indent=2))
+
       - name: Publish release with all assets
         shell: bash
         env:
@@ -352,7 +426,19 @@ jobs:
         run: |
           set -euo pipefail
 
-          mapfile -d '' release_files < <(find release-assets -type f -print0 | sort -z)
+          declare -A seen_basenames
+          release_files=()
+          while IFS= read -r -d '' file; do
+            base=$(basename "$file")
+            if [[ "$base" == "data.tar.gz" || "$base" == "control.tar.gz" ]]; then
+              continue
+            fi
+            if [[ -z "${seen_basenames[$base]:-}" ]]; then
+              seen_basenames[$base]=1
+              release_files+=("$file")
+            fi
+          done < <(find release-assets -type f -print0 | sort -z)
+
           if [ "${#release_files[@]}" -eq 0 ]; then
             echo "::error::No release assets found."
             exit 1
@@ -401,6 +487,12 @@ jobs:
 
           virustotal_url="https://www.virustotal.com/gui/file-analysis/${analysis_id}"
           release_notes=$'Legitimacy is supremacy.\n'"${virustotal_url}"
+
+          # Delete existing release (and its assets) to avoid duplicate asset errors
+          if gh release view "$TAG_NAME" &>/dev/null; then
+            echo "Deleting existing release $TAG_NAME..."
+            gh release delete "$TAG_NAME" --yes
+          fi
 
           gh release create "$TAG_NAME" "${release_files[@]}" \
             --draft \

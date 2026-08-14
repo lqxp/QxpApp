@@ -1,6 +1,6 @@
 [package]
 name = "qxchat"
-version = "1.15.1"
+version = "1.16.1"
 description = "QxChat Client"
 authors = []
 license = "MIT"
@@ -20,8 +20,9 @@ tauri = { version = "=2.11.3", features = ["custom-protocol", "tray-icon", "devt
 tauri-plugin-dialog = "=2.7.1"
 tauri-plugin-notification = "=2.3.3"
 tauri-plugin-opener = "=2.5.4"
+tauri-plugin-process = "=2.3.0"
 tauri-plugin-single-instance = "=2.3.4"
-semver = "=1.0.28"
+tauri-plugin-updater = "2.10.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

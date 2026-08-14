@@ -39,7 +39,7 @@
 
 let
   pname = "qxchat";
-  version = "1.15.1";
+  version = "1.16.1";
 
   webkitgtk = webkitgtk_4_1.override {
     enableExperimental = true;
@@ -69,7 +69,7 @@ let
         "--force"
       ];
 
-      hash = "sha256-oc9H/TyXRx/X8xdiGXjs9Wa6CodI2kaDi8XT84mDpns=";
+      hash = "sha256-QHeX8ygoUhJUlxfbnix9fSXcch8kBbKLIAwN44Gi5lw=";
     };
 
     buildPhase = ''
@@ -255,7 +255,7 @@ rustPlatform.buildRustPackage {
 
   meta = {
     description = "QxChat desktop client (Tauri)";
-    homepage = "https://github.com/lqxp/client-tauri";
+    homepage = "https://github.com/lqxp/client";
     license = lib.licenses.mit;
     platforms = lib.platforms.linux;
     mainProgram = "qxchat";
