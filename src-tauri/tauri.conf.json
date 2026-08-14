@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "cd client && bun install --no-save && bun vite --host 0.0.0.0",
     "beforeBuildCommand": "cd client && bun run build:tauri",
-    "devUrl": "http://localhost:4173/#/",
+    "devUrl": "http://localhost:4173",
     "frontendDist": "../client/dist"
   },
   "app": {
