@@ -274,11 +274,39 @@ if [[ ${#build_args[@]} -eq 0 ]]; then
   build_args=(--apk --target aarch64)
 fi
 
-# If not explicitly --local and interactive, ask
 LOCAL_DEV=false
-HAS_LOCAL_FLAG=false
-for arg in "${build_args[@]}"; do [[ "$arg" == "--local" ]] && HAS_LOCAL_FLAG=true; done
-if [[ -t 0 ]] && ! $HAS_LOCAL_FLAG; then
+HAS_TARGET_FLAG=false
+DEPLOY_APP=false
+HAS_DEPLOY_FLAG=false
+
+# Filter out our custom flags before passing to tauri/cargo
+tauri_args=()
+for arg in "${build_args[@]}"; do
+  case "$arg" in
+    --local)
+      LOCAL_DEV=true
+      HAS_TARGET_FLAG=true
+      ;;
+    --prod)
+      LOCAL_DEV=false
+      HAS_TARGET_FLAG=true
+      ;;
+    --deploy)
+      DEPLOY_APP=true
+      HAS_DEPLOY_FLAG=true
+      ;;
+    *)
+      tauri_args+=("$arg")
+      ;;
+  esac
+done
+build_args=("${tauri_args[@]}")
+if [[ ${#build_args[@]} -eq 0 ]]; then
+  build_args=(--apk --target aarch64)
+fi
+
+# If no target flag was provided and we are in an interactive shell, ask
+if [[ -t 0 ]] && ! $HAS_TARGET_FLAG; then
   echo -e "\033[1;36mBuild target:\033[0m"
   echo "  [1] Production  (from files/config.custom.toml)"
   echo "  [2] Local dev   (http://127.0.0.1:4560)"
@@ -286,19 +314,6 @@ if [[ -t 0 ]] && ! $HAS_LOCAL_FLAG; then
   if [[ "$choice" == "2" ]]; then
     LOCAL_DEV=true
   fi
-fi
-
-# Filter out our custom flags before passing to tauri/cargo
-tauri_args=()
-for arg in "${build_args[@]}"; do
-  case "$arg" in
-    --local) LOCAL_DEV=true ;;
-    *) tauri_args+=("$arg") ;;
-  esac
-done
-build_args=("${tauri_args[@]}")
-if [[ ${#build_args[@]} -eq 0 ]]; then
-  build_args=(--apk --target aarch64)
 fi
 
 if $LOCAL_DEV; then
@@ -317,11 +332,15 @@ echo
 echo "APK output(s):"
 find src-tauri/gen/android/app/build/outputs -name "*.apk" -print 2>/dev/null || true
 
-if [[ $BUILD_EXIT -eq 0 && -t 0 ]]; then
-  echo
-  read -rp "Deploy to Android device? [Y/n] " answer
-  if [[ -z "$answer" || "$answer" =~ ^[Yy] ]]; then
+if [[ $BUILD_EXIT -eq 0 ]]; then
+  if $DEPLOY_APP; then
     scripts/adb-deploy.sh "$@"
+  elif [[ -t 0 ]] && ! $HAS_DEPLOY_FLAG; then
+    echo
+    read -rp "Deploy to Android device? [Y/n] " answer
+    if [[ -z "$answer" || "$answer" =~ ^[Yy] ]]; then
+      scripts/adb-deploy.sh "$@"
+    fi
   fi
 fi
 
