@@ -104,7 +104,7 @@ if [[ $BUILD_EXIT -eq 0 ]]; then
       do_upload=true
     elif [[ -t 0 ]]; then
       echo
-      echo -e "\033[1;33mUpload to catbox.moe? (15s timeout) [y/N] \033[0m"
+      echo -e "\033[1;33mUpload to download.wf? (15s timeout) [y/N] \033[0m"
       read -rt 15 answer || answer=""
       [[ "$answer" =~ ^[Yy] ]] && do_upload=true
     fi
@@ -112,8 +112,13 @@ if [[ $BUILD_EXIT -eq 0 ]]; then
     if $do_upload; then
       SIZE=$(stat -c%s "$ARTIFACT" 2>/dev/null || echo 0)
       echo "Uploading $(basename "$ARTIFACT") (${SIZE} bytes)..."
-      UPLOAD_OUT="$(bun run scripts/catbox-uploader.mts --file "$ARTIFACT" 2>&1 || true)"
-      URL="$(echo "$UPLOAD_OUT" | grep -oE 'https://files\.catbox\.moe/[a-zA-Z0-9]+' | head -1 || true)"
+
+      UPLOADER_ARGS=(--file "$ARTIFACT")
+      [[ -n "${DOWNLOADWF_BASE:-}" ]] && UPLOADER_ARGS+=(--base "$DOWNLOADWF_BASE")
+      [[ -n "${DOWNLOADWF_PASSWORD:-}" ]] && UPLOADER_ARGS+=(--password "$DOWNLOADWF_PASSWORD")
+
+      UPLOAD_OUT="$(bun run scripts/downloadwf-uploader.mts "${UPLOADER_ARGS[@]}" 2>&1 || true)"
+      URL="$(echo "$UPLOAD_OUT" | grep -oE 'https?://[A-Za-z0-9._:-]+/[a-z0-9]{8}' | head -1 || true)"
       if [[ -n "$URL" ]]; then
         echo -e "\033[0;32mDone: $URL\033[0m"
       else
