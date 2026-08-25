@@ -60,7 +60,7 @@ async function uploadToDownloadWf(
 
 const filePath = getArg("file");
 if (!filePath) {
-  console.error("Usage: bun run ./downloadwf-uploader.mts --file <path> [--password <pass>] [--base <url>]");
+  console.error("Usage: bun run ./file-uploader.mts --file <path> [--password <pass>] [--base <url>]");
   process.exit(1);
 }
 

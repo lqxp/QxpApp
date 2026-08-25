@@ -117,7 +117,7 @@ if [[ $BUILD_EXIT -eq 0 ]]; then
       [[ -n "${DOWNLOADWF_BASE:-}" ]] && UPLOADER_ARGS+=(--base "$DOWNLOADWF_BASE")
       [[ -n "${DOWNLOADWF_PASSWORD:-}" ]] && UPLOADER_ARGS+=(--password "$DOWNLOADWF_PASSWORD")
 
-      UPLOAD_OUT="$(bun run scripts/downloadwf-uploader.mts "${UPLOADER_ARGS[@]}" 2>&1 || true)"
+      UPLOAD_OUT="$(bun run scripts/file-uploader.mts "${UPLOADER_ARGS[@]}" 2>&1 || true)"
       URL="$(echo "$UPLOAD_OUT" | grep -oE 'https?://[A-Za-z0-9._:-]+/[a-z0-9]{8}' | head -1 || true)"
       if [[ -n "$URL" ]]; then
         echo -e "\033[0;32mDone: $URL\033[0m"
