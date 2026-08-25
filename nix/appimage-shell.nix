@@ -21,6 +21,7 @@ let
   basePackages = with pkgs; [
     at-spi2-atk
     atkmm
+    alsa-lib
     bun
     cairo
     cargo

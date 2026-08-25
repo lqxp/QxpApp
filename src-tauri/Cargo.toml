@@ -28,9 +28,21 @@ serde_json = "1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 reqwest = { version = "=0.13.4", default-features = false, features = ["json", "native-tls"] }
+windows = { version = "0.58", features = [
+  "Win32_Media_Audio",
+  "Win32_Media_Audio_Endpoints",
+  "Win32_Devices_DeviceAndDriverInstallation",
+  "Win32_Foundation",
+  "Win32_System_Com",
+] }
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 reqwest = { version = "=0.13.4", default-features = false, features = ["json", "rustls"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))'.dependencies]
 webkit2gtk = "2.0.2"
+# System-audio capture: `cpal` drives PulseAudio/PipeWire monitor sources.
+cpal = "0.15"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+screencapturekit = { version = "8", features = ["macos_13_0"] }

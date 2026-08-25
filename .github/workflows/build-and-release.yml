@@ -146,6 +146,8 @@ jobs:
             patchelf \
             libssl-dev \
             libgtk-3-dev \
+            libasound2-dev \
+            pkg-config \
             wget \
             file \
             curl \

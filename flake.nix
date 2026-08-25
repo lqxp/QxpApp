@@ -168,6 +168,7 @@
               xdotool
               dbus
               libayatana-appindicator
+              alsa-lib
             ])
             ++ gstPlugins;
 

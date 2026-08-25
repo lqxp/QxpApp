@@ -35,6 +35,7 @@
   nodejs,
   pnpm,
   libayatana-appindicator,
+  alsa-lib,
 }:
 
 let
@@ -158,6 +159,7 @@ let
       wayland
       pipewire
       libayatana-appindicator
+      alsa-lib
     ]
     ++ gstPlugins
   );
@@ -230,6 +232,7 @@ rustPlatform.buildRustPackage {
     mesa
     libepoxy
     wayland
+    alsa-lib
   ]
   ++ gstPlugins;
 
