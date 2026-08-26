@@ -40,7 +40,9 @@ windows = { version = "0.58", features = [
 reqwest = { version = "=0.13.4", default-features = false, features = ["json", "rustls", "socks"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))'.dependencies]
-webkit2gtk = "2.0.2"
+# `v2_32` unlocks `WebsiteDataManager::set_network_proxy_settings` so Tor can
+# reconfigure the WebView proxy at runtime (WebKitGTK <= 2.38).
+webkit2gtk = { version = "2.0.2", features = ["v2_32"] }
 # System-audio capture: `cpal` drives PulseAudio/PipeWire monitor sources.
 cpal = "0.15"
 
