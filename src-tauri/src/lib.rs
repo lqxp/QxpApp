@@ -7,6 +7,7 @@ use tauri::{
 
 pub mod permissions;
 pub mod background;
+pub mod tor;
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod screen_audio;
@@ -55,6 +56,7 @@ pub fn run() {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let builder = builder
         .plugin(screen_audio::init())
+        .plugin(tor::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {

@@ -26,8 +26,17 @@ tauri-plugin-updater = "2.10.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# Tor connectivity (embedded client + SOCKS5 plumbing).
+# NOTE: pin these to the latest compatible versions when wiring the real
+# transport; they are not yet downloaded in this checkout so `cargo add` (or an
+# explicit `cargo update`) will resolve the exact semver on first build.
+arti-client = "0.22"
+fast-socks5 = "0.9"
+tokio-tungstenite = "0.24"
+tor-rtcompat = "0.22"
+
 [target.'cfg(target_os = "windows")'.dependencies]
-reqwest = { version = "=0.13.4", default-features = false, features = ["json", "native-tls"] }
+reqwest = { version = "=0.13.4", default-features = false, features = ["json", "native-tls", "socks"] }
 windows = { version = "0.58", features = [
   "Win32_Media_Audio",
   "Win32_Media_Audio_Endpoints",
@@ -37,7 +46,7 @@ windows = { version = "0.58", features = [
 ] }
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
-reqwest = { version = "=0.13.4", default-features = false, features = ["json", "rustls"] }
+reqwest = { version = "=0.13.4", default-features = false, features = ["json", "rustls", "socks"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))'.dependencies]
 webkit2gtk = "2.0.2"
