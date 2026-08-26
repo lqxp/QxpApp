@@ -75,7 +75,7 @@ pub async fn fetch_relays(port: u16, limit: usize) -> Result<Vec<TorRelayInfo>, 
         .get(&url)
         .send()
         .await
-        .map_err(|e| format!("request: {e}"))?;
+        .map_err(|e| format!("request via {proxy}: {e}"))?;
 
     let status = resp.status();
     if !status.is_success() {

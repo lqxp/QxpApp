@@ -345,6 +345,42 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the is_background_running command without any pre-configured scope.",
+          "type": "string",
+          "const": "background:allow-is-background-running",
+          "markdownDescription": "Enables the is_background_running command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the start_background command without any pre-configured scope.",
+          "type": "string",
+          "const": "background:allow-start-background",
+          "markdownDescription": "Enables the start_background command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the stop_background command without any pre-configured scope.",
+          "type": "string",
+          "const": "background:allow-stop-background",
+          "markdownDescription": "Enables the stop_background command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the is_background_running command without any pre-configured scope.",
+          "type": "string",
+          "const": "background:deny-is-background-running",
+          "markdownDescription": "Denies the is_background_running command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the start_background command without any pre-configured scope.",
+          "type": "string",
+          "const": "background:deny-start-background",
+          "markdownDescription": "Denies the start_background command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the stop_background command without any pre-configured scope.",
+          "type": "string",
+          "const": "background:deny-stop-background",
+          "markdownDescription": "Denies the stop_background command without any pre-configured scope."
+        },
+        {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",
           "type": "string",
           "const": "core:default",
@@ -2701,6 +2737,90 @@
           "type": "string",
           "const": "process:deny-restart",
           "markdownDescription": "Denies the restart command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the start command without any pre-configured scope.",
+          "type": "string",
+          "const": "screen-audio:allow-start",
+          "markdownDescription": "Enables the start command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the stop command without any pre-configured scope.",
+          "type": "string",
+          "const": "screen-audio:allow-stop",
+          "markdownDescription": "Enables the stop command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the start command without any pre-configured scope.",
+          "type": "string",
+          "const": "screen-audio:deny-start",
+          "markdownDescription": "Denies the start command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the stop command without any pre-configured scope.",
+          "type": "string",
+          "const": "screen-audio:deny-stop",
+          "markdownDescription": "Denies the stop command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the is_ready command without any pre-configured scope.",
+          "type": "string",
+          "const": "tor:allow-is-ready",
+          "markdownDescription": "Enables the is_ready command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the relays command without any pre-configured scope.",
+          "type": "string",
+          "const": "tor:allow-relays",
+          "markdownDescription": "Enables the relays command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the start command without any pre-configured scope.",
+          "type": "string",
+          "const": "tor:allow-start",
+          "markdownDescription": "Enables the start command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the status command without any pre-configured scope.",
+          "type": "string",
+          "const": "tor:allow-status",
+          "markdownDescription": "Enables the status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the stop command without any pre-configured scope.",
+          "type": "string",
+          "const": "tor:allow-stop",
+          "markdownDescription": "Enables the stop command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the is_ready command without any pre-configured scope.",
+          "type": "string",
+          "const": "tor:deny-is-ready",
+          "markdownDescription": "Denies the is_ready command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the relays command without any pre-configured scope.",
+          "type": "string",
+          "const": "tor:deny-relays",
+          "markdownDescription": "Denies the relays command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the start command without any pre-configured scope.",
+          "type": "string",
+          "const": "tor:deny-start",
+          "markdownDescription": "Denies the start command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the status command without any pre-configured scope.",
+          "type": "string",
+          "const": "tor:deny-status",
+          "markdownDescription": "Denies the status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the stop command without any pre-configured scope.",
+          "type": "string",
+          "const": "tor:deny-stop",
+          "markdownDescription": "Denies the stop command without any pre-configured scope."
         },
         {
           "description": "This permission set configures which kind of\nupdater functions are exposed to the frontend.\n\n#### Granted Permissions\n\nThe full workflow from checking for updates to installing them\nis enabled.\n\n\n#### This default permission set includes:\n\n- `allow-check`\n- `allow-download`\n- `allow-install`\n- `allow-download-and-install`",

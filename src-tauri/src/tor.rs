@@ -153,9 +153,14 @@ async fn relays<R: Runtime>(
     state: State<'_, TorState>,
     limit: Option<usize>,
 ) -> Result<Vec<relays::TorRelayInfo>, String> {
+    // The relay directory is fetched through the local Tor SOCKS5 proxy. That
+    // only works once Tor is actually running; otherwise the request would just
+    // fail with a connection-refused error, so surface a clear message instead.
+    if !state.is_running() {
+        return Err("Tor is not running. Start Tor before loading the relay directory.".into());
+    }
+
     let port = state.current_port();
-    // If Tor is not yet running, still try the configured port; Onionoo will be
-    // unreachable until the SOCKS listener is up, and we surface that error.
     let limit = limit.unwrap_or(100).clamp(1, 500);
     relays::fetch_relays(port, limit).await
 }

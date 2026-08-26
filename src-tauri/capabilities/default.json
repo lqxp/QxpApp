@@ -15,6 +15,16 @@
     "notification:default",
     "updater:default",
     "process:allow-restart",
+    "screen-audio:allow-start",
+    "screen-audio:allow-stop",
+    "background:allow-start-background",
+    "background:allow-stop-background",
+    "background:allow-is-background-running",
+    "tor:allow-status",
+    "tor:allow-start",
+    "tor:allow-stop",
+    "tor:allow-is-ready",
+    "tor:allow-relays",
     {
       "identifier": "opener:allow-open-url",
       "allow": [
