@@ -85,17 +85,23 @@ pub fn run() {
                     .build()?;
 
                 // Determine the SOCKS port (default 9050).
-                let port = app.state::<tor::TorState>().port();
+                let port = app
+                    .try_state::<tor::TorState>()
+                    .map(|s| s.port())
+                    .unwrap_or(9050);
 
                 if tor_enabled {
                     let result = {
-                        let state = app.state::<tor::TorState>();
-                        tor::start_tor_blocking(
-                            app.handle(),
-                            state.inner(),
-                            Some(port),
-                            std::time::Duration::from_secs(60),
-                        )
+                        let state = app.try_state::<tor::TorState>();
+                        match state {
+                            Some(s) => tor::start_tor_blocking(
+                                app.handle(),
+                                s.inner(),
+                                Some(port),
+                                std::time::Duration::from_secs(60),
+                            ),
+                            None => Err("TorState not ready".into()),
+                        }
                     };
                     if let Err(e) = result {
                         eprintln!("[qxchat] boot: failed to start Tor: {e}");
