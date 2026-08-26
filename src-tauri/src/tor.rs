@@ -109,6 +109,11 @@ impl TorState {
         *self.port.lock().unwrap()
     }
 
+    /// Public accessor so the startup code can read the configured SOCKS port.
+    pub fn port(&self) -> u16 {
+        self.current_port()
+    }
+
     fn phase(&self) -> TorPhase {
         *self.phase.lock().unwrap()
     }
@@ -171,6 +176,7 @@ pub fn start_tor<R: Runtime>(
     *state.port.lock().unwrap() = requested;
     state.set_error(None);
     state.set_phase(TorPhase::Bootstrapping);
+    write_tor_enabled(app, true);
 
     // Boot Arti + SOCKS listener on a background thread. `bootstrap` blocks the
     // first time (consensus download), so it never runs on the command's
@@ -201,6 +207,57 @@ pub fn start_tor<R: Runtime>(
     Ok(state.as_status())
 }
 
+/// Starts Tor synchronously and blocks until the SOCKS listener is ready (or
+/// startup fails), so the caller can create the WebView *after* the proxy is
+/// actually available. Used only at boot, before the main window opens.
+pub fn start_tor_blocking<R: Runtime>(
+    app: &AppHandle<R>,
+    state: &TorState,
+    port: Option<u16>,
+    timeout: std::time::Duration,
+) -> Result<(), String> {
+    if state.is_running() {
+        return Ok(());
+    }
+
+    let requested = port.unwrap_or(DEFAULT_SOCKS_PORT);
+    *state.port.lock().unwrap() = requested;
+    state.set_error(None);
+    state.set_phase(TorPhase::Bootstrapping);
+
+    let stage = Arc::new(engine::Stage::new(TorPhase::Bootstrapping));
+    let engine_stage = Arc::clone(&stage);
+    let handle = engine::TorEngine::spawn(requested, engine_stage)?;
+    *state.engine.lock().unwrap() = Some(handle);
+    *state.stage.lock().unwrap() = Some(Arc::clone(&stage));
+
+    let started = std::time::Instant::now();
+    loop {
+        match stage.phase() {
+            TorPhase::Ready => {
+                state.set_phase(TorPhase::Ready);
+                let _ = app.emit("tor:status", state.as_status());
+                return Ok(());
+            }
+            TorPhase::Error => {
+                state.set_phase(TorPhase::Error);
+                state.set_error(stage.error());
+                let _ = app.emit("tor:status", state.as_status());
+                return Err(state.error.lock().unwrap().clone().unwrap_or_default());
+            }
+            _ => {}
+        }
+
+        if started.elapsed() > timeout {
+            state.set_phase(TorPhase::Error);
+            state.set_error(Some("Tor bootstrap timed out".into()));
+            return Err("Tor bootstrap timed out".into());
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(120));
+    }
+}
+
 /// Stops Tor and restores direct connectivity.
 #[tauri::command]
 async fn stop<R: Runtime>(app: AppHandle<R>, state: State<'_, TorState>) -> Result<TorStatus, String> {
@@ -215,9 +272,21 @@ pub fn stop_tor<R: Runtime>(app: &AppHandle<R>, state: &TorState) -> Result<TorS
     state.set_phase(TorPhase::Idle);
     state.set_error(None);
     let _ = platform::clear_proxy(app);
+    write_tor_enabled(app, false);
     emit_status(app, state);
 
     Ok(state.as_status())
+}
+
+/// Restores direct connectivity (no proxy).
+pub fn clear_proxy<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    platform::clear_proxy(app)
+}
+
+/// Applies the OS WebView proxy to route traffic through Tor (runtime, used on
+/// Linux where the proxy can be changed post-hoc).
+pub fn apply_proxy<R: Runtime>(app: &AppHandle<R>, port: u16) -> Result<(), String> {
+    platform::apply_proxy(app, port)
 }
 
 /// Watches the engine's `stage` and mirrors it into the managed `TorState`,
@@ -318,6 +387,25 @@ async fn probe_port(port: u16) -> Result<bool, String> {
         Ok(_) => Ok(true),
         Err(_) => Ok(false),
     }
+}
+
+/// Filesystem location of the "tor enabled" marker, read at boot so the WebView
+/// can be created with the right proxy before the frontend ever loads.
+fn tor_marker_path<R: Runtime>(app: &AppHandle<R>) -> Option<std::path::PathBuf> {
+    let dir = app.path().app_data_dir().ok()?;
+    Some(dir.join("tor-enabled"))
+}
+
+/// Persists the boot-time Tor preference (used by the startup proxy wiring).
+pub fn write_tor_enabled<R: Runtime>(app: &AppHandle<R>, enabled: bool) {
+    let Some(path) = tor_marker_path(app) else { return };
+    let _ = std::fs::write(&path, if enabled { b"1" } else { b"0" });
+}
+
+/// Reads the persisted boot-time Tor preference.
+pub fn read_tor_enabled<R: Runtime>(app: &AppHandle<R>) -> bool {
+    let Some(path) = tor_marker_path(app) else { return false };
+    matches!(std::fs::read(&path), Ok(bytes) if bytes == b"1")
 }
 
 /// Initializes the Tor plugin.

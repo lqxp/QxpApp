@@ -161,6 +161,13 @@ fn run_engine(stop: Arc<AtomicBool>, port: u16, stage: Arc<Stage>) -> Result<(),
             return Err(format!("arti bootstrap: {e}"));
         }
 
+        // Populate an initial circuit right away so the UI has a live guard →
+        // middle → exit path to show even before the first real proxy request.
+        // This is best-effort and must not block the SOCKS listener.
+        if let Ok(stream) = client.connect(("example.com", 443_u16)).await {
+            let _ = publish_circuit(&client, &stream, &stage);
+        }
+
         // The SOCKS listener is what makes the proxy usable; only once it is
         // bound do we mark Tor ready.
         stage.set_phase(super::TorPhase::Ready);

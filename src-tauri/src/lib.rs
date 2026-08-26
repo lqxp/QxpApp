@@ -2,7 +2,7 @@
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    Emitter, Listener, Manager,
+    Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder,
 };
 
 pub mod permissions;
@@ -70,6 +70,69 @@ pub fn run() {
         .setup(|app| {
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {
+                // ── Startup: build the WebView *after* Tor is ready ──────────
+                // On Windows the WebView2 proxy (--proxy-server) must be set at
+                // environment creation time, so we start Tor (if enabled) before
+                // creating the main window, showing a lightweight splash meanwhile.
+                let tor_enabled = tor::read_tor_enabled(app.handle());
+
+                let splash = WebviewWindowBuilder::new(app, "splash", WebviewUrl::App("splash.html".into()))
+                    .title("QxChat")
+                    .inner_size(360.0, 260.0)
+                    .resizable(false)
+                    .decorations(false)
+                    .always_on_top(true)
+                    .build()?;
+
+                // Determine the SOCKS port (default 9050).
+                let port = app.state::<tor::TorState>().port();
+
+                if tor_enabled {
+                    let result = {
+                        let state = app.state::<tor::TorState>();
+                        tor::start_tor_blocking(
+                            app.handle(),
+                            state.inner(),
+                            Some(port),
+                            std::time::Duration::from_secs(60),
+                        )
+                    };
+                    if let Err(e) = result {
+                        eprintln!("[qxchat] boot: failed to start Tor: {e}");
+                    }
+                }
+
+                let mut main_builder = WebviewWindowBuilder::new(
+                    app,
+                    "main",
+                    WebviewUrl::App("index.html".into()),
+                )
+                .title("QxChat")
+                .inner_size(1200.0, 800.0)
+                .decorations(false);
+
+                #[cfg(target_os = "windows")]
+                if tor_enabled {
+                    main_builder = main_builder.additional_browser_args(&format!(
+                        "--proxy-server=socks5://127.0.0.1:{port}"
+                    ));
+                }
+
+                main_builder.build()?;
+                let _ = splash.close();
+
+                // Linux/macOS proxy is set at runtime after the window exists.
+                #[cfg(any(
+                    target_os = "linux",
+                    target_os = "dragonfly",
+                    target_os = "freebsd",
+                    target_os = "netbsd",
+                    target_os = "openbsd"
+                ))]
+                if tor_enabled {
+                    let _ = tor::apply_proxy(app.handle(), port);
+                }
+
                 let quit = MenuItem::with_id(app, "quit", "Quit QxChat", true, None::<&str>)?;
 
                 let show = MenuItem::with_id(app, "show", "Open QxChat", true, None::<&str>)?;
@@ -86,7 +149,7 @@ pub fn run() {
                     "toggle_tor",
                     "Connect through Tor",
                     true,
-                    false,
+                    tor_enabled,
                     None::<&str>,
                 )?;
 

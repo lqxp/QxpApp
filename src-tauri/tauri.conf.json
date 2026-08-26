@@ -11,18 +11,7 @@
   },
   "app": {
     "withGlobalTauri": true,
-    "windows": [
-      {
-        "label": "main",
-        "title": "QxChat",
-        "width": 1200,
-        "height": 800,
-        "resizable": true,
-        "fullscreen": false,
-        "decorations": false,
-        "devtools": true
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }
