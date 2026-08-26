@@ -85,8 +85,6 @@ async fn serve_socks<R: Runtime>(
     port: u16,
     stop: Arc<AtomicBool>,
 ) -> Result<(), String> {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
         .await
         .map_err(|e| format!("socks bind 127.0.0.1:{port}: {e}"))?;

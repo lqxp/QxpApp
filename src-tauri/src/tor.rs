@@ -27,7 +27,7 @@ use std::sync::Mutex;
 
 use tauri::{
     plugin::{Builder, TauriPlugin},
-    AppHandle, Manager, Runtime, State,
+    AppHandle, Emitter, Manager, Runtime, State,
 };
 
 /// The default SOCKS5 port Tor exposes locally.
