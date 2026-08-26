@@ -10,6 +10,11 @@ use tauri_plugin_dialog::DialogExt;
 
 pub mod permissions;
 pub mod background;
+// Tor (embedded Arti client + SOCKS5 plumbing) is a desktop-only feature: the
+// mobile WebViews expose no per-app proxy, and cross-compiling Arti's default
+// native-tls backend to Android/iOS is not supported. Gate the module out on
+// mobile so the platform-specific proxy glue and Arti dependencies aren't built.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub mod tor;
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -71,6 +76,11 @@ pub fn run() {
 
     builder
         .setup(|app| {
+            // The desktop branch below is the only consumer of `app`; on mobile
+            // every block is cfg'd out, so keep the parameter marked as used.
+            #[cfg(any(target_os = "android", target_os = "ios"))]
+            let _ = &app;
+
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {
                 // The main window is created from tauri.conf.json (as before),

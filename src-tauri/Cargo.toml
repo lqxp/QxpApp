@@ -26,29 +26,6 @@ tauri-plugin-updater = "2.10.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# Tor connectivity (embedded client + SOCKS5 plumbing).
-# `experimental-api` unlocks `DataStream::circuit()` so we can surface the live
-# circuit (guard → middle → exit) like Tor Browser; `geoip` embeds a country
-# database so each relay can be labelled with its country.
-arti-client = { version = "0.22", features = ["experimental-api", "geoip"] }
-fast-socks5 = "0.9"
-tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time", "sync", "macros"] }
-tokio-tungstenite = "0.24"
-# `static` compiles SQLite from source (`rusqlite/bundled`) so the Windows GNU
-# cross-compile does not need a system `libsqlite3` at link time.
-tor-dirmgr = { version = "0.22", features = ["static"] }
-# `experimental-api` unlocks `DataStream::circuit()` so we can surface the live
-# circuit (guard → middle → exit) like Tor Browser.
-tor-proto = { version = "0.22", features = ["experimental-api"] }
-# `HasRelayIds`/`HasAddrs` are needed to read IPs + fingerprints off each hop.
-tor-linkspec = "0.22"
-# `HasCountryCode`/`CountryCode` label each relay with its country.
-tor-geoip = "0.22"
-# NetDir lookup (nickname + country) for each circuit hop; `experimental-api`
-# unlocks `Relay::rs()` (nickname) and `geoip` unlocks `country_code()`.
-tor-netdir = { version = "0.22", features = ["experimental-api", "geoip"] }
-tor-rtcompat = "0.22"
-
 [target.'cfg(target_os = "windows")'.dependencies]
 reqwest = { version = "=0.13.4", default-features = false, features = ["json", "native-tls", "socks"] }
 windows = { version = "0.58", features = [
@@ -69,3 +46,26 @@ cpal = "0.15"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 screencapturekit = { version = "8", features = ["macos_13_0"] }
+
+# Tor connectivity (embedded client + SOCKS5 plumbing) is desktop-only. The
+# mobile WebViews expose no per-app proxy and Arti's default native-tls backend
+# does not cross-compile to Android/iOS, so gate the whole set out there.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+arti-client = { version = "0.22", features = ["experimental-api", "geoip"] }
+fast-socks5 = "0.9"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time", "sync", "macros"] }
+tokio-tungstenite = "0.24"
+# `static` compiles SQLite from source (`rusqlite/bundled`) so the Windows GNU
+# cross-compile does not need a system `libsqlite3` at link time.
+tor-dirmgr = { version = "0.22", features = ["static"] }
+# `experimental-api` unlocks `DataStream::circuit()` so we can surface the live
+# circuit (guard → middle → exit) like Tor Browser.
+tor-proto = { version = "0.22", features = ["experimental-api"] }
+# `HasRelayIds`/`HasAddrs` are needed to read IPs + fingerprints off each hop.
+tor-linkspec = "0.22"
+# `HasCountryCode`/`CountryCode` label each relay with its country.
+tor-geoip = "0.22"
+# NetDir lookup (nickname + country) for each circuit hop; `experimental-api`
+# unlocks `Relay::rs()` (nickname) and `geoip` unlocks `country_code()`.
+tor-netdir = { version = "0.22", features = ["experimental-api", "geoip"] }
+tor-rtcompat = "0.22"
