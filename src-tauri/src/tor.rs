@@ -22,6 +22,7 @@
 
 mod engine;
 mod geo;
+mod port;
 mod relays;
 
 use std::sync::{Arc, Mutex};
@@ -66,6 +67,10 @@ pub struct TorStatus {
     pub running: bool,
     pub port: u16,
     pub phase: &'static str,
+    /// Where the traffic is actually routed: `embedded` (our Arti client, with a
+    /// live circuit we can display), `external` (a foreign Tor already bound to
+    /// the port — transport works, circuit display is unavailable), or `none`.
+    pub mode: &'static str,
     /// Present only during the `error` phase (bootstrap/startup failure message).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -78,6 +83,9 @@ pub struct TorState {
     port: Mutex<u16>,
     /// The engine's shared lifecycle stage (phase + latest circuit).
     stage: Mutex<Option<Arc<engine::Stage>>>,
+    /// True when we detected a foreign Tor already bound to our SOCKS5 port and
+    /// decided to reuse it instead of bootstrapping our own Arti client.
+    external: Mutex<bool>,
 }
 
 impl Default for TorState {
@@ -86,6 +94,7 @@ impl Default for TorState {
             engine: Mutex::new(None),
             port: Mutex::new(DEFAULT_SOCKS_PORT),
             stage: Mutex::new(None),
+            external: Mutex::new(false),
         }
     }
 }
@@ -120,16 +129,34 @@ impl TorState {
     fn as_status(&self) -> TorStatus {
         let phase = self.phase();
         let error = self.stage().and_then(|s| s.error());
+        let external = *self.external.lock().unwrap();
+        let mode = if external {
+            "external"
+        } else if self.is_running() {
+            "embedded"
+        } else {
+            "none"
+        };
         TorStatus {
             running: self.is_running(),
             port: self.current_port(),
             phase: phase.as_str(),
+            mode,
             error: if phase == TorPhase::Error {
                 error
             } else {
                 None
             },
         }
+    }
+
+    /// Marks whether we are reusing a foreign Tor (external mode).
+    fn set_external(&self, value: bool) {
+        *self.external.lock().unwrap() = value;
+    }
+
+    fn is_external(&self) -> bool {
+        *self.external.lock().unwrap()
     }
 }
 
@@ -296,6 +323,7 @@ fn spawn_phase_watcher<R: Runtime>(app: AppHandle<R>, stage: Arc<engine::Stage>,
                         running: matches!(current, TorPhase::Ready | TorPhase::Bootstrapping),
                         port,
                         phase: current.as_str(),
+                        mode: "embedded",
                         error: if current == TorPhase::Error {
                             stage.error()
                         } else {
@@ -351,8 +379,10 @@ fn circuit<R: Runtime>(
     _app: AppHandle<R>,
     state: State<'_, TorState>,
 ) -> Result<Option<engine::CircuitPath>, String> {
-    // The circuit is only meaningful while Tor is running.
-    if !state.is_running() {
+    // The circuit is only meaningful for our *embedded* Tor client. A foreign
+    // (external) Tor provides transport but exposes no circuit we can read, so
+    // report none and let the UI hide the circuit/map.
+    if !state.is_running() || state.is_external() {
         return Ok(None);
     }
     Ok(state
@@ -408,6 +438,98 @@ pub fn read_tor_enabled<R: Runtime>(app: &AppHandle<R>) -> bool {
     matches!(std::fs::read(&path), Ok(bytes) if bytes == b"1")
 }
 
+/// Starts the permanent SOCKS5 proxy (passthrough by default) and stores the
+/// engine + stage on the managed state.
+fn spawn_proxy<R: Runtime>(app: &AppHandle<R>) {
+    let state = app.state::<TorState>();
+    let port = state.current_port();
+    let stage = Arc::new(engine::Stage::new(TorPhase::Idle));
+    match engine::TorEngine::spawn(port, Arc::clone(&stage)) {
+        Ok(handle) => {
+            *state.engine.lock().unwrap() = Some(handle);
+            *state.stage.lock().unwrap() = Some(stage);
+        }
+        Err(e) => {
+            eprintln!("[qxchat-tor] failed to start proxy: {e}");
+        }
+    }
+}
+
+/// Called when a foreign Tor (or other SOCKS5 proxy) is already bound to our
+/// port. Asks the user what to do via a native dialog, then applies the choice.
+fn resolve_foreign_tor<R: Runtime>(app: &AppHandle<R>) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+
+    let handle = app.clone();
+    let msg = concat!(
+        "Another Tor process is already using port 9050.\n\n",
+        "• Use it — route traffic through the existing Tor (without the live circuit view)\n",
+        "• Kill it — stop that process and start QxChat's own embedded Tor\n",
+        "• Quit — close QxChat",
+    );
+
+    handle
+        .dialog()
+        .message(msg)
+        .title("Tor port conflict")
+        .buttons(MessageDialogButtons::YesNoCancelCustom(
+            "Use the node".to_string(),
+            "Kill the node".to_string(),
+            "Quit QxChat".to_string(),
+        ))
+        .show_with_result(move |result| {
+            match result {
+                tauri_plugin_dialog::MessageDialogResult::Yes => {
+                    // Reuse the foreign SOCKS5 proxy for transport; mark external.
+                    let state = handle.state::<TorState>();
+                    state.set_external(true);
+                    // Ensure a stage exists (no proxy engine in external mode) and
+                    // reflect a "ready" transport state.
+                    let stage = state.stage().unwrap_or_else(|| {
+                        let s = Arc::new(engine::Stage::new(TorPhase::Ready));
+                        *state.stage.lock().unwrap() = Some(Arc::clone(&s));
+                        s
+                    });
+                    stage.set_phase(TorPhase::Ready);
+                    // Persist so a relaunch keeps routing through the port.
+                    write_tor_enabled(&handle, true);
+                    emit_status(&handle, &state);
+                }
+                tauri_plugin_dialog::MessageDialogResult::No => {
+                    // Kill the foreign process, then start our own proxy + Tor.
+                    let port = DEFAULT_SOCKS_PORT;
+                    let state = handle.state::<TorState>();
+                    match port::kill_process_on_port(port) {
+                        Ok(()) => {
+                            spawn_proxy(&handle);
+                            if read_tor_enabled(&handle) {
+                                let st = handle.state::<TorState>();
+                                let _ = start_tor(&handle, &st, None);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("[qxchat-tor] failed to free port {port}: {e}");
+                            // Leave external mode so the transport still works via
+                            // the (still-present) foreign proxy rather than dying.
+                            state.set_external(true);
+                            let stage = state.stage().unwrap_or_else(|| {
+                                let s = Arc::new(engine::Stage::new(TorPhase::Ready));
+                                *state.stage.lock().unwrap() = Some(Arc::clone(&s));
+                                s
+                            });
+                            stage.set_phase(TorPhase::Ready);
+                            emit_status(&handle, &state);
+                        }
+                    }
+                }
+                _ => {
+                    // Cancel/Quit: close the app.
+                    handle.exit(0);
+                }
+            }
+        });
+}
+
 /// Initializes the Tor plugin.
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("tor")
@@ -415,26 +537,18 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
         .setup(|app, _api| {
             app.manage(TorState::default());
 
-            // Start the permanent SOCKS5 proxy (direct/passthrough by default) so
-            // the WebView's static `--proxy-server` always has a live port.
-            let state = app.state::<TorState>();
-            let port = state.current_port();
-            let stage = Arc::new(engine::Stage::new(TorPhase::Idle));
-            match engine::TorEngine::spawn(port, Arc::clone(&stage)) {
-                Ok(handle) => {
-                    *state.engine.lock().unwrap() = Some(handle);
-                    *state.stage.lock().unwrap() = Some(stage);
-                }
-                Err(e) => {
-                    eprintln!("[qxchat-tor] failed to start proxy: {e}");
-                }
+            let port = DEFAULT_SOCKS_PORT;
+            // If a foreign Tor already holds our SOCKS port, we cannot bind our
+            // own permanent proxy — ask the user what to do instead.
+            if port::probe_socks5(port) {
+                resolve_foreign_tor(app);
+                return Ok(());
             }
 
-            // If the user left Tor enabled, bootstrap it now (without restart) so
-            // the backend is already `bootstrapping`/`ready` by the time the
-            // frontend loads. This removes the ambiguity where the frontend sees
-            // `idle` at boot and can't tell "Tor disabled" from "Tor not yet
-            // bootstrapped".
+            // No conflict: start our permanent proxy, then bootstrap Tor if the
+            // user previously left it enabled.
+            spawn_proxy(app);
+
             if read_tor_enabled(app) {
                 let state = app.state::<TorState>();
                 if let Err(e) = start_tor(app, &state, None) {
