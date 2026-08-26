@@ -35,6 +35,7 @@ fn mask_ip(ip: &str) -> String {
     if ip.contains(':') {
         // IPv6: replace the final hextet(s) with "xxx".
         let idx = ip.rfind(':').map(|i| i + 1).unwrap_or(0);
+        format!("{}xxx", &ip[..idx])
     } else {
         // IPv4: replace the last octet.
         match ip.rfind('.') {
