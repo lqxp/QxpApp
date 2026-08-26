@@ -4475,7 +4475,7 @@ dependencies = [
 
 [[package]]
 name = "qxchat"
-version = "1.18.1"
+version = "1.19.0"
 dependencies = [
  "arti-client",
  "cpal",
