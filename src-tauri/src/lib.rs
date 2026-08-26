@@ -123,8 +123,7 @@ pub fn run() {
                         }
 
                         "toggle_tor" => {
-                            let state = app.state::<tor::TorState>();
-                            let enable = !state.running();
+                            let enable = !app.state::<tor::TorState>().running();
                             let action = if enable { "enabling" } else { "disabling" };
                             let msg = format!(
                                 "Changing this setting will restart QxChat completely. Continue {action} Tor?"
@@ -134,6 +133,7 @@ pub fn run() {
                             // async and runs on the main thread safely, unlike
                             // `blocking_show` (which would freeze the UI).
                             let menu_clone = toggle_tor_menu.clone();
+                            let app_clone = app.clone();
                             app.dialog()
                                 .message(msg)
                                 .buttons(tauri_plugin_dialog::MessageDialogButtons::OkCancel)
@@ -142,7 +142,8 @@ pub fn run() {
                                         return;
                                     }
                                     let _ = menu_clone.set_checked(enable);
-                                    if let Err(e) = tor::toggle_tor(&app, &state, enable, None) {
+                                    let state = app_clone.state::<tor::TorState>();
+                                    if let Err(e) = tor::toggle_tor(&app_clone, &state, enable, None) {
                                         eprintln!("[qxchat] tray: failed to toggle Tor: {e}");
                                         let _ = menu_clone.set_checked(!enable);
                                     }
