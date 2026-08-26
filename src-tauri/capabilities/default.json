@@ -25,6 +25,7 @@
     "tor:allow-stop",
     "tor:allow-is-ready",
     "tor:allow-relays",
+    "tor:allow-circuit",
     {
       "identifier": "opener:allow-open-url",
       "allow": [

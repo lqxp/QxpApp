@@ -16,11 +16,39 @@ use std::sync::{Arc, Mutex};
 use arti_client::{IntoTorAddr, TorClient};
 use tor_rtcompat::Runtime;
 
+/// A single hop of the live circuit, resolved to the fields the UI needs to
+/// show the Tor-Browser-style circuit display.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CircuitHopInfo {
+    /// "guard" | "middle" | "exit".
+    pub role: &'static str,
+    /// First IPv4/IPv6 socket address of the relay, if known.
+    pub ip: Option<String>,
+    /// Relay nickname from the consensus (e.g. "Unnamed" style names).
+    pub nickname: String,
+    /// ISO 3166-1 alpha-2 country code, if known (requires geoip).
+    pub country: Option<String>,
+    /// Ed25519 identity, base64 (fingerprint).
+    pub ed25519: Option<String>,
+    /// RSA identity, hex (fingerprint).
+    pub rsa: Option<String>,
+}
+
+/// The currently-active circuit (guard → middle → exit).
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CircuitPath {
+    pub hops: Vec<CircuitHopInfo>,
+}
+
 /// Shared lifecycle state driven by the engine thread and observed by `tor.rs`
 /// so the frontend can show "bootstrapping" until Tor is actually ready.
 pub struct Stage {
     phase: Mutex<super::TorPhase>,
     error: Mutex<Option<String>>,
+    /// Most recently established circuit (filled from `serve_socks`).
+    circuit: Mutex<Option<CircuitPath>>,
 }
 
 impl Stage {
@@ -28,6 +56,7 @@ impl Stage {
         Self {
             phase: Mutex::new(phase),
             error: Mutex::new(None),
+            circuit: Mutex::new(None),
         }
     }
 
@@ -45,6 +74,15 @@ impl Stage {
 
     pub fn error(&self) -> Option<String> {
         self.error.lock().unwrap().clone()
+    }
+
+    /// Publishes the most recently observed circuit path.
+    pub fn set_circuit(&self, path: CircuitPath) {
+        *self.circuit.lock().unwrap() = Some(path);
+    }
+
+    pub fn circuit(&self) -> Option<CircuitPath> {
+        self.circuit.lock().unwrap().clone()
     }
 }
 
@@ -66,8 +104,15 @@ impl TorEngine {
         let thread = std::thread::Builder::new()
             .name("qxchat-tor".into())
             .spawn(move || {
-                if let Err(e) = run_engine(thread_stop, port, stage) {
+                if let Err(e) = run_engine(thread_stop, port, Arc::clone(&stage)) {
                     eprintln!("[qxchat-tor] engine error: {e}");
+                    // Ensure the watcher never spins forever: mark Error even for
+                    // failures that happen before `run_engine` reaches its own
+                    // phase bookkeeping (e.g. tokio runtime build failure).
+                    if stage.phase() != super::TorPhase::Ready {
+                        stage.set_phase(super::TorPhase::Error);
+                        stage.set_error(e);
+                    }
                 }
             })
             .map_err(|e| format!("failed to spawn Tor thread: {e}"))?;
@@ -119,7 +164,7 @@ fn run_engine(stop: Arc<AtomicBool>, port: u16, stage: Arc<Stage>) -> Result<(),
         // The SOCKS listener is what makes the proxy usable; only once it is
         // bound do we mark Tor ready.
         stage.set_phase(super::TorPhase::Ready);
-        serve_socks(&client, port, stop).await
+        serve_socks(&client, port, stop, stage).await
     })
 }
 
@@ -128,6 +173,7 @@ async fn serve_socks<R: Runtime>(
     client: &TorClient<R>,
     port: u16,
     stop: Arc<AtomicBool>,
+    stage: Arc<Stage>,
 ) -> Result<(), String> {
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
         .await
@@ -145,12 +191,13 @@ async fn serve_socks<R: Runtime>(
 
         let client = TorClient::clone(client);
         let stop = Arc::clone(&stop);
+        let stage = Arc::clone(&stage);
 
         tokio::spawn(async move {
             if stop.load(Ordering::SeqCst) {
                 return;
             }
-            let _ = handle_socks_conn(client, &mut socket).await;
+            let _ = handle_socks_conn(client, &mut socket, stage).await;
         });
     }
 
@@ -161,6 +208,7 @@ async fn serve_socks<R: Runtime>(
 async fn handle_socks_conn<R: Runtime>(
     client: TorClient<R>,
     socket: &mut tokio::net::TcpStream,
+    stage: Arc<Stage>,
 ) -> Result<(), String> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -232,6 +280,11 @@ async fn handle_socks_conn<R: Runtime>(
         }
     };
 
+    // Publish the circuit this stream is riding on, so the UI can show the
+    // live guard → middle → exit path (like Tor Browser). Best-effort: failures
+    // here must never break the proxy.
+    let _ = publish_circuit(&client, &stream, &stage);
+
     // Success reply.
     let _ = socket.write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]).await;
 
@@ -240,5 +293,69 @@ async fn handle_socks_conn<R: Runtime>(
     // TCP socket directly.
     let _ = tokio::io::copy_bidirectional(&mut stream, socket).await;
 
+    Ok(())
+}
+
+/// Resolves the circuit of `stream` into a [`CircuitPath`] and stores it on
+/// `stage`. IPs and fingerprints come directly off the circuit's
+/// `OwnedChanTarget`s (role is derived from hop position); nicknames and
+/// countries come from the live directory. Best-effort: failures must never
+/// break the proxy itself.
+fn publish_circuit<R: Runtime>(
+    client: &TorClient<R>,
+    stream: &arti_client::DataStream,
+    stage: &Stage,
+) -> Result<(), String> {
+    use tor_geoip::HasCountryCode as _;
+    use tor_linkspec::{HasAddrs as _, HasRelayIds as _, RelayId};
+
+    let hops = stream.circuit().path();
+    if hops.len() < 2 {
+        return Ok(());
+    }
+
+    // Resolve nicknames + countries from the live directory (best-effort).
+    let netdir = client.dirmgr().netdir(tor_netdir::Timeliness::Timely).ok();
+
+    let last = hops.len() - 1;
+    let mut resolved = Vec::with_capacity(hops.len());
+    for (i, hop) in hops.iter().enumerate() {
+        let role = if i == 0 {
+            "guard"
+        } else if i == last {
+            "exit"
+        } else {
+            "middle"
+        };
+
+        let ed25519 = hop.ed_identity().map(|id| id.to_string());
+        let rsa = hop.rsa_identity().map(|id| id.to_string());
+        let mut ip = hop.addrs().first().map(|a| a.ip().to_string());
+        let mut nickname = "Unnamed".to_string();
+        let mut country = None;
+
+        // Enrich from the directory using the relay's Ed25519 identity.
+        if let (Some(nd), Some(ed)) = (&netdir, hop.ed_identity()) {
+            let relay_id = RelayId::Ed25519(*ed);
+            if let Some(relay) = nd.by_id(&relay_id) {
+                nickname = relay.rs().nickname().to_string();
+                if ip.is_none() {
+                    ip = relay.addrs().first().map(|a| a.ip().to_string());
+                }
+                country = relay.country_code().map(|c| c.to_string());
+            }
+        }
+
+        resolved.push(CircuitHopInfo {
+            role,
+            ip,
+            nickname,
+            country,
+            ed25519,
+            rsa,
+        });
+    }
+
+    stage.set_circuit(CircuitPath { hops: resolved });
     Ok(())
 }

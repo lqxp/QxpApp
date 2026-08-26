@@ -2763,6 +2763,12 @@
           "markdownDescription": "Denies the stop command without any pre-configured scope."
         },
         {
+          "description": "Enables the circuit command without any pre-configured scope.",
+          "type": "string",
+          "const": "tor:allow-circuit",
+          "markdownDescription": "Enables the circuit command without any pre-configured scope."
+        },
+        {
           "description": "Enables the is_ready command without any pre-configured scope.",
           "type": "string",
           "const": "tor:allow-is-ready",
@@ -2791,6 +2797,12 @@
           "type": "string",
           "const": "tor:allow-stop",
           "markdownDescription": "Enables the stop command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the circuit command without any pre-configured scope.",
+          "type": "string",
+          "const": "tor:deny-circuit",
+          "markdownDescription": "Denies the circuit command without any pre-configured scope."
         },
         {
           "description": "Denies the is_ready command without any pre-configured scope.",

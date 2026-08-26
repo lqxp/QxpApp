@@ -3,7 +3,8 @@ fn main() {
         tauri_build::Attributes::new()
             .plugin(
                 "tor",
-                tauri_build::InlinedPlugin::new().commands(&["status", "start", "stop", "is_ready", "relays"]),
+                tauri_build::InlinedPlugin::new()
+                    .commands(&["status", "start", "stop", "is_ready", "relays", "circuit"]),
             )
             .plugin(
                 "screen-audio",

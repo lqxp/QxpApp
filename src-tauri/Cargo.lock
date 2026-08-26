@@ -203,6 +203,7 @@ dependencies = [
  "tor-config",
  "tor-dirmgr",
  "tor-error",
+ "tor-geoip",
  "tor-guardmgr",
  "tor-keymgr",
  "tor-linkspec",
@@ -4494,6 +4495,10 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "tor-dirmgr",
+ "tor-geoip",
+ "tor-linkspec",
+ "tor-netdir",
+ "tor-proto",
  "tor-rtcompat",
  "webkit2gtk",
  "windows 0.58.0",
@@ -4575,6 +4580,12 @@ checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
 dependencies = [
  "getrandom 0.3.4",
 ]
+
+[[package]]
+name = "rangemap"
+version = "1.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a611d15b50743feb4c76b7d03edcb0e64f399c26961e4efe6975bc398be6aa3d"
 
 [[package]]
 name = "raw-window-handle"
@@ -6688,6 +6699,7 @@ dependencies = [
  "tor-chanmgr",
  "tor-config",
  "tor-error",
+ "tor-geoip",
  "tor-guardmgr",
  "tor-linkspec",
  "tor-netdir",
@@ -6818,6 +6830,7 @@ dependencies = [
  "tor-consdiff",
  "tor-dirclient",
  "tor-error",
+ "tor-geoip",
  "tor-guardmgr",
  "tor-llcrypto",
  "tor-netdir",
@@ -6844,6 +6857,18 @@ dependencies = [
  "thiserror 1.0.69",
  "tracing",
  "void",
+]
+
+[[package]]
+name = "tor-geoip"
+version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "45f4efea6e35735b3669a0898d17d833a49b04d890ff71abd9b031cf63f69fe7"
+dependencies = [
+ "derive_more 0.99.20",
+ "once_cell",
+ "rangemap",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -7036,6 +7061,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tor-basic-utils",
  "tor-error",
+ "tor-geoip",
  "tor-linkspec",
  "tor-llcrypto",
  "tor-netdoc",
@@ -7043,6 +7069,7 @@ dependencies = [
  "tor-units",
  "tracing",
  "typed-index-collections",
+ "visibility",
 ]
 
 [[package]]
@@ -7177,6 +7204,7 @@ dependencies = [
  "rand 0.8.8",
  "serde",
  "tor-basic-utils",
+ "tor-geoip",
  "tor-linkspec",
  "tor-netdir",
  "tor-netdoc",

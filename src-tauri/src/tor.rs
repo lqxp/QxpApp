@@ -79,6 +79,8 @@ pub struct TorState {
     phase: Mutex<TorPhase>,
     /// Last bootstrap/startup error message, cleared on a new start.
     error: Mutex<Option<String>>,
+    /// The engine's shared lifecycle stage (phase + latest circuit).
+    stage: Mutex<Option<Arc<engine::Stage>>>,
 }
 
 impl Default for TorState {
@@ -88,6 +90,7 @@ impl Default for TorState {
             port: Mutex::new(DEFAULT_SOCKS_PORT),
             phase: Mutex::new(TorPhase::Idle),
             error: Mutex::new(None),
+            stage: Mutex::new(None),
         }
     }
 }
@@ -177,6 +180,7 @@ pub fn start_tor<R: Runtime>(
     let engine_stage = Arc::clone(&stage);
     let handle = engine::TorEngine::spawn(requested, engine_stage)?;
     *state.engine.lock().unwrap() = Some(handle);
+    *state.stage.lock().unwrap() = Some(Arc::clone(&stage));
 
     // Apply the OS WebView proxy. On platforms where the WebView proxy cannot
     // be applied post-hoc (macOS/WKWebView, WebView2 environment), this is a
@@ -207,6 +211,7 @@ async fn stop<R: Runtime>(app: AppHandle<R>, state: State<'_, TorState>) -> Resu
 pub fn stop_tor<R: Runtime>(app: &AppHandle<R>, state: &TorState) -> Result<TorStatus, String> {
     // Drop the engine (stops Arti + SOCKS listener) and clear the proxy.
     *state.engine.lock().unwrap() = None;
+    *state.stage.lock().unwrap() = None;
     state.set_phase(TorPhase::Idle);
     state.set_error(None);
     let _ = platform::clear_proxy(app);
@@ -288,6 +293,25 @@ async fn relays<R: Runtime>(
     relays::fetch_relays(port, limit).await
 }
 
+/// Returns the most recently established Tor circuit (guard → middle → exit),
+/// populated as the SOCKS proxy forwards real traffic.
+#[tauri::command]
+fn circuit<R: Runtime>(
+    _app: AppHandle<R>,
+    state: State<'_, TorState>,
+) -> Result<Option<engine::CircuitPath>, String> {
+    // The circuit is only meaningful while Tor is running.
+    if !state.is_running() {
+        return Ok(None);
+    }
+    Ok(state
+        .stage
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|s| s.circuit()))
+}
+
 /// Cheap TCP connectivity probe against the local SOCKS listener.
 async fn probe_port(port: u16) -> Result<bool, String> {
     match tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
@@ -299,7 +323,7 @@ async fn probe_port(port: u16) -> Result<bool, String> {
 /// Initializes the Tor plugin.
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("tor")
-        .invoke_handler(tauri::generate_handler![status, start, stop, is_ready, relays])
+        .invoke_handler(tauri::generate_handler![status, start, stop, is_ready, relays, circuit])
         .setup(|app, _api| {
             app.manage(TorState::default());
             Ok(())
