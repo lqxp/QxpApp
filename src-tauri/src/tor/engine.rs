@@ -316,17 +316,22 @@ fn publish_circuit<R: Runtime>(
     use tor_geoip::HasCountryCode as _;
     use tor_linkspec::{HasAddrs as _, HasRelayIds as _, RelayId};
 
-    let hops = stream.circuit().path();
-    if hops.len() < 2 {
+    let path = stream.circuit().path_ref();
+    let n = path.n_hops();
+    if n < 2 {
         return Ok(());
     }
 
     // Resolve nicknames + countries from the live directory (best-effort).
     let netdir = client.dirmgr().netdir(tor_netdir::Timeliness::Timely).ok();
 
-    let last = hops.len() - 1;
-    let mut resolved = Vec::with_capacity(hops.len());
-    for (i, hop) in hops.iter().enumerate() {
+    let last = n - 1;
+    let mut resolved = Vec::with_capacity(n);
+    for (i, entry) in path.iter().enumerate() {
+        let Some(hop) = entry.as_chan_target() else {
+            continue;
+        };
+
         let role = if i == 0 {
             "guard"
         } else if i == last {

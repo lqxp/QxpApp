@@ -21,6 +21,7 @@
 //!   status emitted as "tor:status" (idle → bootstrapping → ready | error)
 
 mod engine;
+mod geo;
 mod relays;
 
 use std::sync::{Arc, Mutex};
@@ -381,6 +382,13 @@ fn circuit<R: Runtime>(
         .and_then(|s| s.circuit()))
 }
 
+/// Fetches the client's and server's coarse geolocation for the Tor map
+/// (public IP is masked; only country/lat/lng/AS are returned).
+#[tauri::command]
+async fn geo<R: Runtime>(_app: AppHandle<R>) -> Result<geo::GeoInfo, String> {
+    geo::fetch_geo().await
+}
+
 /// Cheap TCP connectivity probe against the local SOCKS listener.
 async fn probe_port(port: u16) -> Result<bool, String> {
     match tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
@@ -399,7 +407,13 @@ fn tor_marker_path<R: Runtime>(app: &AppHandle<R>) -> Option<std::path::PathBuf>
 /// Persists the boot-time Tor preference (used by the startup proxy wiring).
 pub fn write_tor_enabled<R: Runtime>(app: &AppHandle<R>, enabled: bool) {
     let Some(path) = tor_marker_path(app) else { return };
-    let _ = std::fs::write(&path, if enabled { b"1" } else { b"0" });
+    // `app_data_dir` may not exist yet on first run; create it before writing.
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Err(e) = std::fs::write(&path, if enabled { b"1" } else { b"0" }) {
+        eprintln!("[qxchat-tor] failed to persist tor-enabled: {e}");
+    }
 }
 
 /// Reads the persisted boot-time Tor preference.
@@ -411,7 +425,7 @@ pub fn read_tor_enabled<R: Runtime>(app: &AppHandle<R>) -> bool {
 /// Initializes the Tor plugin.
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("tor")
-        .invoke_handler(tauri::generate_handler![status, start, stop, is_ready, relays, circuit])
+        .invoke_handler(tauri::generate_handler![status, start, stop, is_ready, relays, circuit, geo])
         .setup(|app, _api| {
             app.manage(TorState::default());
             Ok(())

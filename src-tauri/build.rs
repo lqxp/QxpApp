@@ -4,7 +4,7 @@ fn main() {
             .plugin(
                 "tor",
                 tauri_build::InlinedPlugin::new()
-                    .commands(&["status", "start", "stop", "is_ready", "relays", "circuit"]),
+                    .commands(&["status", "start", "stop", "is_ready", "relays", "circuit", "geo"]),
             )
             .plugin(
                 "screen-audio",
