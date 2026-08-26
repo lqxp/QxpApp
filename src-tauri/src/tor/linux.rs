@@ -47,10 +47,11 @@ pub fn apply_proxy<R: Runtime>(app: &AppHandle<R>, port: u16) -> Result<(), Stri
     })
     .map_err(|e| e.to_string())?;
 
-    match inner_error.lock().unwrap().take() {
+    let result = match inner_error.lock().unwrap().take() {
         Some(e) => Err(e),
         None => Ok(()),
-    }
+    };
+    result
 }
 
 /// Restores direct connectivity (no proxy).
@@ -79,8 +80,9 @@ pub fn clear_proxy<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     })
     .map_err(|e| e.to_string())?;
 
-    match inner_error.lock().unwrap().take() {
+    let result = match inner_error.lock().unwrap().take() {
         Some(e) => Err(e),
         None => Ok(()),
-    }
+    };
+    result
 }
