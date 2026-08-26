@@ -23,7 +23,7 @@
 mod engine;
 mod relays;
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use tauri::{
     plugin::{Builder, TauriPlugin},
@@ -33,6 +33,31 @@ use tauri::{
 /// The default SOCKS5 port Tor exposes locally.
 const DEFAULT_SOCKS_PORT: u16 = 9050;
 
+/// Lifecycle state of the embedded Tor client.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TorPhase {
+    /// Not started.
+    Idle,
+    /// Arti is downloading its consensus / establishing the network (listener
+    /// not bound yet; network not usable).
+    Bootstrapping,
+    /// Bootstrap finished and the SOCKS listener is accepting connections.
+    Ready,
+    /// Bootstrap or startup failed.
+    Error,
+}
+
+impl TorPhase {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TorPhase::Idle => "idle",
+            TorPhase::Bootstrapping => "bootstrapping",
+            TorPhase::Ready => "ready",
+            TorPhase::Error => "error",
+        }
+    }
+}
+
 /// Serializable status snapshot returned by `status` and emitted on changes.
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,6 +65,9 @@ pub struct TorStatus {
     pub running: bool,
     pub port: u16,
     pub phase: &'static str,
+    /// Present only during the `error` phase (bootstrap/startup failure message).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// Shared, managed run-state for the Tor client.
@@ -47,6 +75,10 @@ pub struct TorState {
     /// The active engine (Arti + SOCKS listener), if any. Dropping it stops Tor.
     engine: Mutex<Option<engine::TorEngine>>,
     port: Mutex<u16>,
+    /// Live phase, driven by the engine thread (idle → bootstrapping → ready/error).
+    phase: Mutex<TorPhase>,
+    /// Last bootstrap/startup error message, cleared on a new start.
+    error: Mutex<Option<String>>,
 }
 
 impl Default for TorState {
@@ -54,6 +86,8 @@ impl Default for TorState {
         Self {
             engine: Mutex::new(None),
             port: Mutex::new(DEFAULT_SOCKS_PORT),
+            phase: Mutex::new(TorPhase::Idle),
+            error: Mutex::new(None),
         }
     }
 }
@@ -63,15 +97,38 @@ impl TorState {
         self.engine.lock().unwrap().is_some()
     }
 
+    /// Public accessor for the tray / app setup to know whether Tor is active.
+    pub fn running(&self) -> bool {
+        self.is_running()
+    }
+
     fn current_port(&self) -> u16 {
         *self.port.lock().unwrap()
     }
 
+    fn phase(&self) -> TorPhase {
+        *self.phase.lock().unwrap()
+    }
+
+    fn set_phase(&self, phase: TorPhase) {
+        *self.phase.lock().unwrap() = phase;
+    }
+
+    fn set_error(&self, msg: Option<String>) {
+        *self.error.lock().unwrap() = msg;
+    }
+
     fn as_status(&self) -> TorStatus {
+        let phase = self.phase();
         TorStatus {
             running: self.is_running(),
             port: self.current_port(),
-            phase: if self.is_running() { "ready" } else { "idle" },
+            phase: phase.as_str(),
+            error: if phase == TorPhase::Error {
+                self.error.lock().unwrap().clone()
+            } else {
+                None
+            },
         }
     }
 }
@@ -93,6 +150,15 @@ async fn start<R: Runtime>(
     state: State<'_, TorState>,
     port: Option<u16>,
 ) -> Result<TorStatus, String> {
+    start_tor(&app, &state, port)
+}
+
+/// Starts Tor synchronously (reused by both the `start` command and the tray).
+pub fn start_tor<R: Runtime>(
+    app: &AppHandle<R>,
+    state: &TorState,
+    port: Option<u16>,
+) -> Result<TorStatus, String> {
     // Idempotent: already running → just report current state.
     if state.is_running() {
         return Ok(state.as_status());
@@ -100,24 +166,33 @@ async fn start<R: Runtime>(
 
     let requested = port.unwrap_or(DEFAULT_SOCKS_PORT);
     *state.port.lock().unwrap() = requested;
+    state.set_error(None);
+    state.set_phase(TorPhase::Bootstrapping);
 
     // Boot Arti + SOCKS listener on a background thread. `bootstrap` blocks the
     // first time (consensus download), so it never runs on the command's
-    // runtime; status reaches the UI as soon as the listener is up (or on error).
-    let handle = engine::TorEngine::spawn(requested)?;
+    // runtime; the engine thread flips `stage` to Ready/Error when the listener
+    // is actually up (or on failure).
+    let stage = Arc::new(engine::Stage::new(TorPhase::Bootstrapping));
+    let engine_stage = Arc::clone(&stage);
+    let handle = engine::TorEngine::spawn(requested, engine_stage)?;
     *state.engine.lock().unwrap() = Some(handle);
 
     // Apply the OS WebView proxy. On platforms where the WebView proxy cannot
     // be applied post-hoc (macOS/WKWebView, WebView2 environment), this is a
     // no-op or returns a descriptive error; the app can still use the raw
     // SOCKS port from the frontend for explicit connections.
-    let proxy_result = platform::apply_proxy(&app, requested);
-    emit_status(&app, &state);
+    let proxy_result = platform::apply_proxy(app, requested);
+    emit_status(app, state);
 
     if let Err(e) = proxy_result {
         // Report the proxy limitation without tearing down Tor itself.
         eprintln!("[qxchat-tor] webview proxy not applied: {e}");
     }
+
+    // Watch the engine stage from Rust (bootstrap finishes in the background)
+    // and stream the transition to `ready` / `error` back to the frontend.
+    spawn_phase_watcher(app.clone(), stage);
 
     Ok(state.as_status())
 }
@@ -125,12 +200,60 @@ async fn start<R: Runtime>(
 /// Stops Tor and restores direct connectivity.
 #[tauri::command]
 async fn stop<R: Runtime>(app: AppHandle<R>, state: State<'_, TorState>) -> Result<TorStatus, String> {
+    stop_tor(&app, &state)
+}
+
+/// Stops Tor synchronously (reused by both the `stop` command and the tray).
+pub fn stop_tor<R: Runtime>(app: &AppHandle<R>, state: &TorState) -> Result<TorStatus, String> {
     // Drop the engine (stops Arti + SOCKS listener) and clear the proxy.
     *state.engine.lock().unwrap() = None;
-    let _ = platform::clear_proxy(&app);
-    emit_status(&app, &state);
+    state.set_phase(TorPhase::Idle);
+    state.set_error(None);
+    let _ = platform::clear_proxy(app);
+    emit_status(app, state);
 
     Ok(state.as_status())
+}
+
+/// Watches the engine's `stage` and mirrors it into the managed `TorState`,
+/// emitting `tor:status` whenever the phase changes (bootstrapping → ready/error).
+fn spawn_phase_watcher<R: Runtime>(app: AppHandle<R>, stage: Arc<engine::Stage>) {
+    let _ = std::thread::Builder::new()
+        .name("qxchat-tor-status".into())
+        .spawn(move || {
+            let mut last = stage.phase();
+            loop {
+                let current = stage.phase();
+                if current != last {
+                    last = current;
+
+                    // Mirror into the managed state so `status` reflects it too.
+                    if let Some(state) = app.try_state::<TorState>() {
+                        state.set_phase(current);
+                        if current == TorPhase::Error {
+                            state.set_error(stage.error());
+                        }
+                    }
+
+                    let _ = app.emit(
+                        "tor:status",
+                        app.try_state::<TorState>()
+                            .map(|s| s.as_status())
+                            .unwrap_or_else(|| TorStatus {
+                                running: current == TorPhase::Ready || current == TorPhase::Bootstrapping,
+                                port: 0,
+                                phase: current.as_str(),
+                                error: stage.error(),
+                            }),
+                    );
+                }
+
+                if current == TorPhase::Ready || current == TorPhase::Error {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(120));
+            }
+        });
 }
 
 /// Probes whether the local SOCKS5 port is accepting connections (readiness).

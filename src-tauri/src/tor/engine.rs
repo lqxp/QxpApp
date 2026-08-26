@@ -11,10 +11,42 @@
 //! this local SOCKS5 port; they do not re-implement Tor.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use arti_client::{IntoTorAddr, TorClient};
 use tor_rtcompat::Runtime;
+
+/// Shared lifecycle state driven by the engine thread and observed by `tor.rs`
+/// so the frontend can show "bootstrapping" until Tor is actually ready.
+pub struct Stage {
+    phase: Mutex<super::TorPhase>,
+    error: Mutex<Option<String>>,
+}
+
+impl Stage {
+    pub fn new(phase: super::TorPhase) -> Self {
+        Self {
+            phase: Mutex::new(phase),
+            error: Mutex::new(None),
+        }
+    }
+
+    pub fn phase(&self) -> super::TorPhase {
+        *self.phase.lock().unwrap()
+    }
+
+    pub fn set_phase(&self, phase: super::TorPhase) {
+        *self.phase.lock().unwrap() = phase;
+    }
+
+    pub fn set_error(&self, msg: impl Into<String>) {
+        *self.error.lock().unwrap() = Some(msg.into());
+    }
+
+    pub fn error(&self) -> Option<String> {
+        self.error.lock().unwrap().clone()
+    }
+}
 
 /// Shared, managed engine handle. Dropping it stops Tor and the SOCKS listener.
 pub struct TorEngine {
@@ -24,14 +56,17 @@ pub struct TorEngine {
 
 impl TorEngine {
     /// Spawns the engine in a background thread (Arti + SOCKS5 listener).
-    pub fn spawn(port: u16) -> Result<Self, String> {
+    ///
+    /// `stage` is flipped to `Ready` once the SOCKS listener is actually bound
+    /// (i.e. the network is usable), or to `Error` (with a message) on failure.
+    pub fn spawn(port: u16, stage: Arc<Stage>) -> Result<Self, String> {
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
 
         let thread = std::thread::Builder::new()
             .name("qxchat-tor".into())
             .spawn(move || {
-                if let Err(e) = run_engine(thread_stop, port) {
+                if let Err(e) = run_engine(thread_stop, port, stage) {
                     eprintln!("[qxchat-tor] engine error: {e}");
                 }
             })
@@ -54,7 +89,7 @@ impl Drop for TorEngine {
 }
 
 /// Runs Arti bootstrap + the SOCKS5 CONNECT loop on the current thread.
-fn run_engine(stop: Arc<AtomicBool>, port: u16) -> Result<(), String> {
+fn run_engine(stop: Arc<AtomicBool>, port: u16, stage: Arc<Stage>) -> Result<(), String> {
     // Create a Tokio runtime for Arti + the SOCKS listener. Arti's
     // `PreferredRuntime` is Tokio, so `TorClient::builder()` must run inside a
     // Tokio context.
@@ -64,17 +99,26 @@ fn run_engine(stop: Arc<AtomicBool>, port: u16) -> Result<(), String> {
         .map_err(|e| format!("tokio runtime: {e}"))?;
 
     rt.block_on(async move {
-        let client = TorClient::builder()
-            .create_unbootstrapped()
-            .map_err(|e| format!("arti create: {e}"))?;
+        let client = match TorClient::builder().create_unbootstrapped() {
+            Ok(c) => c,
+            Err(e) => {
+                stage.set_phase(super::TorPhase::Error);
+                stage.set_error(format!("arti create: {e}"));
+                return Err(format!("arti create: {e}"));
+            }
+        };
 
         // Bootstrap to the live network (this is the slow part: first boot
         // downloads the consensus, typically a few seconds).
-        client
-            .bootstrap()
-            .await
-            .map_err(|e| format!("arti bootstrap: {e}"))?;
+        if let Err(e) = client.bootstrap().await {
+            stage.set_phase(super::TorPhase::Error);
+            stage.set_error(format!("arti bootstrap: {e}"));
+            return Err(format!("arti bootstrap: {e}"));
+        }
 
+        // The SOCKS listener is what makes the proxy usable; only once it is
+        // bound do we mark Tor ready.
+        stage.set_phase(super::TorPhase::Ready);
         serve_socks(&client, port, stop).await
     })
 }

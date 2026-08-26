@@ -1,8 +1,8 @@
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use tauri::{
-    menu::{Menu, MenuItem},
+    menu::{CheckMenuItem, Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    Emitter, Manager,
+    Emitter, Listener, Manager,
 };
 
 pub mod permissions;
@@ -81,12 +81,25 @@ pub fn run() {
                     None::<&str>,
                 )?;
 
-                let menu = Menu::with_items(app, &[&show, &check_updates, &quit])?;
+                let toggle_tor = CheckMenuItem::with_id(
+                    app,
+                    "toggle_tor",
+                    "Connect through Tor",
+                    true,
+                    false,
+                    None::<&str>,
+                )?;
+
+                let menu = Menu::with_items(app, &[&show, &toggle_tor, &check_updates, &quit])?;
+
+                // Clones for the menu-event handler and the status-sync listener.
+                let toggle_tor_menu = toggle_tor.clone();
+                let toggle_tor_sync = toggle_tor.clone();
 
                 TrayIconBuilder::new()
                     .icon(app.default_window_icon().expect("missing app icon").clone())
                     .menu(&menu)
-                    .on_menu_event(|app, event| match event.id.as_ref() {
+                    .on_menu_event(move |app, event| match event.id.as_ref() {
                         "quit" => {
                             app.exit(0);
                         }
@@ -100,6 +113,21 @@ pub fn run() {
 
                         "check_updates" => {
                             check_updates_from_tray(app.clone());
+                        }
+
+                        "toggle_tor" => {
+                            let state = app.state::<tor::TorState>();
+                            if state.running() {
+                                let _ = tor::stop_tor(&app, &state);
+                                let _ = toggle_tor_menu.set_checked(false);
+                            } else {
+                                match tor::start_tor(&app, &state, None) {
+                                    Ok(_) => {
+                                        let _ = toggle_tor_menu.set_checked(true);
+                                    }
+                                    Err(e) => eprintln!("[qxchat] tray: failed to start Tor: {e}"),
+                                }
+                            }
                         }
 
                         _ => {}
@@ -119,6 +147,16 @@ pub fn run() {
                         }
                     })
                     .build(app)?;
+
+                // Keep the tray "Connect through Tor" check state in sync when Tor
+                // is started/stopped from the Settings UI (which emits tor:status).
+                app.listen("tor:status", move |event| {
+                    let running = serde_json::from_str::<serde_json::Value>(event.payload())
+                        .ok()
+                        .and_then(|v| v.get("running").and_then(|r| r.as_bool()))
+                        .unwrap_or(false);
+                    let _ = toggle_tor_sync.set_checked(running);
+                });
             }
 
             // Linux WebKit permissions
