@@ -155,6 +155,19 @@ pub fn run() {
                 })?;
             }
 
+            // macOS native title bar (traffic lights overlay) — instead of the
+            // custom HTML title bar that Windows/Linux keep (decorations: false).
+            #[cfg(target_os = "macos")]
+            {
+                let window = app
+                    .get_webview_window("main")
+                    .expect("main window not found");
+
+                window.set_decorations(true)?;
+                window.set_title_bar_style(tauri::TitleBarStyle::Overlay)?;
+                window.set_shadow(true)?;
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| {
