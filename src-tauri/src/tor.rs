@@ -177,7 +177,7 @@ pub fn start_tor<R: Runtime>(
     if let Some(engine) = state.engine.lock().unwrap().as_ref() {
         if let Some(stage) = state.stage() {
             engine.enable_tor(Arc::clone(&stage));
-            spawn_phase_watcher(app.clone(), stage);
+            spawn_phase_watcher(app.clone(), stage, requested);
         }
     }
 
@@ -228,17 +228,20 @@ pub fn toggle_tor<R: Runtime>(
     enabled: bool,
     port: Option<u16>,
 ) -> Result<TorStatus, String> {
-    let status = if enabled {
-        start_tor(app, state, port)?
+    // Persist + flip the proxy routing mode first.
+    if enabled {
+        start_tor(app, state, port)?;
     } else {
-        stop_tor(app, state)?
-    };
+        stop_tor(app, state)?;
+    }
 
-    // Persistence already happened inside start_tor/stop_tor; now relaunch so
-    // the WebView proxy takes effect. This is a no-op-on-error guard merely to
-    // surface the status before the process exits.
-    app.request_restart();
-    Ok(status)
+    // Now relaunch so the WebView proxy takes effect. `restart()` diverges
+    // (`-> !`): it either restarts the process directly (main thread) or
+    // requests exit and blocks until the event loop restarts it (other threads)
+    // — both reliably relaunch the app, unlike `request_restart()` which can
+    // fail to deliver the exit event from a Tauri command thread. The `!` return
+    // coerces to `Result<TorStatus, String>`.
+    app.restart()
 }
 
 /// Stops Tor synchronously (reused by both the `stop` command and the tray).
@@ -273,7 +276,7 @@ pub fn apply_proxy<R: Runtime>(app: &AppHandle<R>, port: u16) -> Result<(), Stri
 /// Watches the engine's `stage` and emits `tor:status` whenever the phase
 /// changes (bootstrapping → ready/error). The bootstrap thread flips the stage;
 /// this watcher surfaces that to the frontend.
-fn spawn_phase_watcher<R: Runtime>(app: AppHandle<R>, stage: Arc<engine::Stage>) {
+fn spawn_phase_watcher<R: Runtime>(app: AppHandle<R>, stage: Arc<engine::Stage>, port: u16) {
     let _ = std::thread::Builder::new()
         .name("qxchat-tor-status".into())
         .spawn(move || {
@@ -291,7 +294,7 @@ fn spawn_phase_watcher<R: Runtime>(app: AppHandle<R>, stage: Arc<engine::Stage>)
                     "tor:status",
                     TorStatus {
                         running: matches!(current, TorPhase::Ready | TorPhase::Bootstrapping),
-                        port: 0,
+                        port,
                         phase: current.as_str(),
                         error: if current == TorPhase::Error {
                             stage.error()
