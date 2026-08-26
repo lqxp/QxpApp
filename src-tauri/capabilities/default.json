@@ -38,6 +38,9 @@
         },
         {
           "url": "tel:*"
+        },
+        {
+          "url": "https://metrics.torproject.org/*"
         }
       ]
     }
