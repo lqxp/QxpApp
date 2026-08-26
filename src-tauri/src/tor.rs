@@ -385,7 +385,12 @@ fn tor_marker_path<R: Runtime>(app: &AppHandle<R>) -> Option<std::path::PathBuf>
     Some(dir.join("tor-enabled"))
 }
 
-/// Persists the boot-time Tor preference (used by the startup proxy wiring).
+/// Persists the boot-time Tor preference (on/off only).
+///
+/// The SOCKS5 port is intentionally fixed at [`DEFAULT_SOCKS_PORT`]: the WebView
+/// proxy is baked into `additionalBrowserArgs` at build time and cannot change at
+/// runtime, so a user-configurable port would just leave the WebView pointing at
+/// a dead port. Only the on/off state is persisted.
 pub fn write_tor_enabled<R: Runtime>(app: &AppHandle<R>, enabled: bool) {
     let Some(path) = tor_marker_path(app) else { return };
     // `app_data_dir` may not exist yet on first run; create it before writing.
