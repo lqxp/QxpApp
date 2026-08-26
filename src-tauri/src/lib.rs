@@ -2,8 +2,11 @@
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder,
+    Emitter, Listener, Manager,
 };
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+use tauri_plugin_dialog::DialogExt;
 
 pub mod permissions;
 pub mod background;
@@ -70,75 +73,10 @@ pub fn run() {
         .setup(|app| {
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {
-                // ── Startup: build the WebView *after* Tor is ready ──────────
-                // On Windows the WebView2 proxy (--proxy-server) must be set at
-                // environment creation time, so we start Tor (if enabled) before
-                // creating the main window, showing a lightweight splash meanwhile.
-                let tor_enabled = tor::read_tor_enabled(app.handle());
-
-                let splash = WebviewWindowBuilder::new(app, "splash", WebviewUrl::App("splash.html".into()))
-                    .title("QxChat")
-                    .inner_size(360.0, 260.0)
-                    .resizable(false)
-                    .decorations(false)
-                    .always_on_top(true)
-                    .build()?;
-
-                // Determine the SOCKS port (default 9050).
-                let port = app
-                    .try_state::<tor::TorState>()
-                    .map(|s| s.port())
-                    .unwrap_or(9050);
-
-                if tor_enabled {
-                    let result = {
-                        let state = app.try_state::<tor::TorState>();
-                        match state {
-                            Some(s) => tor::start_tor_blocking(
-                                app.handle(),
-                                s.inner(),
-                                Some(port),
-                                std::time::Duration::from_secs(60),
-                            ),
-                            None => Err("TorState not ready".into()),
-                        }
-                    };
-                    if let Err(e) = result {
-                        eprintln!("[qxchat] boot: failed to start Tor: {e}");
-                    }
-                }
-
-                let mut main_builder = WebviewWindowBuilder::new(
-                    app,
-                    "main",
-                    WebviewUrl::App("index.html".into()),
-                )
-                .title("QxChat")
-                .inner_size(1200.0, 800.0)
-                .decorations(false);
-
-                #[cfg(target_os = "windows")]
-                if tor_enabled {
-                    main_builder = main_builder.additional_browser_args(&format!(
-                        "--proxy-server=socks5://127.0.0.1:{port}"
-                    ));
-                }
-
-                main_builder.build()?;
-                let _ = splash.close();
-
-                // Linux/macOS proxy is set at runtime after the window exists.
-                #[cfg(any(
-                    target_os = "linux",
-                    target_os = "dragonfly",
-                    target_os = "freebsd",
-                    target_os = "netbsd",
-                    target_os = "openbsd"
-                ))]
-                if tor_enabled {
-                    let _ = tor::apply_proxy(app.handle(), port);
-                }
-
+                // The main window is created from tauri.conf.json (as before),
+                // so we no longer create it manually here. Tor is auto-started by
+                // the frontend after the window loads (InboxView), and on Linux
+                // the WebView proxy is applied at runtime via `tor::apply_proxy`.
                 let quit = MenuItem::with_id(app, "quit", "Quit QxChat", true, None::<&str>)?;
 
                 let show = MenuItem::with_id(app, "show", "Open QxChat", true, None::<&str>)?;
@@ -155,7 +93,7 @@ pub fn run() {
                     "toggle_tor",
                     "Connect through Tor",
                     true,
-                    tor_enabled,
+                    tor::read_tor_enabled(app.handle()),
                     None::<&str>,
                 )?;
 
@@ -186,17 +124,29 @@ pub fn run() {
 
                         "toggle_tor" => {
                             let state = app.state::<tor::TorState>();
-                            if state.running() {
-                                let _ = tor::stop_tor(&app, &state);
-                                let _ = toggle_tor_menu.set_checked(false);
-                            } else {
-                                match tor::start_tor(&app, &state, None) {
-                                    Ok(_) => {
-                                        let _ = toggle_tor_menu.set_checked(true);
+                            let enable = !state.running();
+                            let action = if enable { "enabling" } else { "disabling" };
+                            let msg = format!(
+                                "Changing this setting will restart QxChat completely. Continue {action} Tor?"
+                            );
+
+                            // Ask before restarting (native dialog). `show` is
+                            // async and runs on the main thread safely, unlike
+                            // `blocking_show` (which would freeze the UI).
+                            let menu_clone = toggle_tor_menu.clone();
+                            app.dialog()
+                                .message(msg)
+                                .buttons(tauri_plugin_dialog::MessageDialogButtons::OkCancel)
+                                .show(move |confirmed| {
+                                    if !confirmed {
+                                        return;
                                     }
-                                    Err(e) => eprintln!("[qxchat] tray: failed to start Tor: {e}"),
-                                }
-                            }
+                                    let _ = menu_clone.set_checked(enable);
+                                    if let Err(e) = tor::toggle_tor(&app, &state, enable, None) {
+                                        eprintln!("[qxchat] tray: failed to toggle Tor: {e}");
+                                        let _ = menu_clone.set_checked(!enable);
+                                    }
+                                });
                         }
 
                         _ => {}
@@ -280,6 +230,11 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            // Only intercept the main window's close (minimize-to-tray). The
+            // splash must be allowed to close normally.
+            if window.label() != "main" {
+                return;
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
 

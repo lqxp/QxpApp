@@ -1,37 +1,30 @@
-//! Embedded Tor engine: boots Arti and exposes a local SOCKS5 proxy.
+//! Embedded Tor engine + a permanent local SOCKS5 proxy.
 //!
-//! This is the platform-independent core. It:
-//!   1. creates a `TorClient` (Arti) with the default config,
-//!   2. bootstraps it to the live Tor network,
-//!   3. binds a `TcpListener` on `127.0.0.1:{port}` acting as a minimal SOCKS5
-//!      CONNECT proxy whose upstream is `TorClient::connect`, and
-//!   4. reports progress through a callback so the UI can show "bootstrapping".
+//! The proxy listens on `127.0.0.1:{port}` for the whole application lifetime,
+//! so the WebView can be configured once with `--proxy-server=socks5://…` and
+//! never hit a dead port. Each connection is routed through either:
+//!   * `Direct` — plain TCP (passthrough), used when Tor is disabled, or
+//!   * `Tor`    — an embedded Arti `TorClient`, used when Tor is enabled.
 //!
 //! The `tor/<os>.rs` modules only configure the OS WebView proxy to point at
-//! this local SOCKS5 port; they do not re-implement Tor.
+//! this local SOCKS5 port; they do not re-implement anything.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use arti_client::{IntoTorAddr, TorClient};
-use tor_rtcompat::Runtime;
+use tor_rtcompat::{BlockOn, PreferredRuntime};
 
 /// A single hop of the live circuit, resolved to the fields the UI needs to
 /// show the Tor-Browser-style circuit display.
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CircuitHopInfo {
-    /// "guard" | "middle" | "exit".
     pub role: &'static str,
-    /// First IPv4/IPv6 socket address of the relay, if known.
     pub ip: Option<String>,
-    /// Relay nickname from the consensus (e.g. "Unnamed" style names).
     pub nickname: String,
-    /// ISO 3166-1 alpha-2 country code, if known (requires geoip).
     pub country: Option<String>,
-    /// Ed25519 identity, base64 (fingerprint).
     pub ed25519: Option<String>,
-    /// RSA identity, hex (fingerprint).
     pub rsa: Option<String>,
 }
 
@@ -42,12 +35,10 @@ pub struct CircuitPath {
     pub hops: Vec<CircuitHopInfo>,
 }
 
-/// Shared lifecycle state driven by the engine thread and observed by `tor.rs`
-/// so the frontend can show "bootstrapping" until Tor is actually ready.
+/// Shared lifecycle state driven by the proxy thread and observed by `tor.rs`.
 pub struct Stage {
     phase: Mutex<super::TorPhase>,
     error: Mutex<Option<String>>,
-    /// Most recently established circuit (filled from `serve_socks`).
     circuit: Mutex<Option<CircuitPath>>,
 }
 
@@ -68,15 +59,15 @@ impl Stage {
         *self.phase.lock().unwrap() = phase;
     }
 
-    pub fn set_error(&self, msg: impl Into<String>) {
-        *self.error.lock().unwrap() = Some(msg.into());
+    /// Sets (or clears, with `None`) the current error message.
+    pub fn set_error(&self, msg: Option<impl Into<String>>) {
+        *self.error.lock().unwrap() = msg.map(Into::into);
     }
 
     pub fn error(&self) -> Option<String> {
         self.error.lock().unwrap().clone()
     }
 
-    /// Publishes the most recently observed circuit path.
     pub fn set_circuit(&self, path: CircuitPath) {
         *self.circuit.lock().unwrap() = Some(path);
     }
@@ -86,41 +77,88 @@ impl Stage {
     }
 }
 
-/// Shared, managed engine handle. Dropping it stops Tor and the SOCKS listener.
+/// What the permanent proxy routes each connection through.
+#[derive(Clone)]
+enum ProxyMode {
+    Direct,
+    Tor(Arc<TorClient<PreferredRuntime>>),
+}
+
+/// Shared, managed engine handle. It owns the always-on SOCKS5 proxy thread;
+/// dropping it stops the proxy.
 pub struct TorEngine {
     stop: Arc<AtomicBool>,
+    mode: Arc<Mutex<ProxyMode>>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl TorEngine {
-    /// Spawns the engine in a background thread (Arti + SOCKS5 listener).
-    ///
-    /// `stage` is flipped to `Ready` once the SOCKS listener is actually bound
-    /// (i.e. the network is usable), or to `Error` (with a message) on failure.
+    /// Starts the permanent SOCKS5 proxy on `127.0.0.1:{port}` in `Direct` mode.
     pub fn spawn(port: u16, stage: Arc<Stage>) -> Result<Self, String> {
         let stop = Arc::new(AtomicBool::new(false));
+        let mode = Arc::new(Mutex::new(ProxyMode::Direct));
         let thread_stop = Arc::clone(&stop);
+        let thread_mode = Arc::clone(&mode);
 
         let thread = std::thread::Builder::new()
-            .name("qxchat-tor".into())
+            .name("qxchat-proxy".into())
             .spawn(move || {
-                if let Err(e) = run_engine(thread_stop, port, Arc::clone(&stage)) {
-                    eprintln!("[qxchat-tor] engine error: {e}");
-                    // Ensure the watcher never spins forever: mark Error even for
-                    // failures that happen before `run_engine` reaches its own
-                    // phase bookkeeping (e.g. tokio runtime build failure).
-                    if stage.phase() != super::TorPhase::Ready {
+                // `run_proxy` is async; give this dedicated thread its own tokio
+                // runtime and block on the proxy loop.
+                let rt = match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(rt) => rt,
+                    Err(e) => {
+                        eprintln!("[qxchat-proxy] failed to build runtime: {e}");
                         stage.set_phase(super::TorPhase::Error);
-                        stage.set_error(e);
+                        stage.set_error(Some(e.to_string()));
+                        return;
                     }
+                };
+
+                if let Err(e) = rt.block_on(run_proxy(thread_stop, port, thread_mode, Arc::clone(&stage))) {
+                    eprintln!("[qxchat-proxy] engine error: {e}");
+                    stage.set_phase(super::TorPhase::Error);
+                    stage.set_error(Some(e));
                 }
             })
-            .map_err(|e| format!("failed to spawn Tor thread: {e}"))?;
+            .map_err(|e| format!("failed to spawn proxy thread: {e}"))?;
 
         Ok(Self {
             stop,
+            mode,
             thread: Some(thread),
         })
+    }
+
+    /// Bootstraps Arti on a background thread, then flips the proxy to Tor mode
+    /// and updates `stage` to Ready/Error.
+    pub fn enable_tor(&self, stage: Arc<Stage>) {
+        let mode = Arc::clone(&self.mode);
+        std::thread::Builder::new()
+            .name("qxchat-tor-bootstrap".into())
+            .spawn(move || {
+                match bootstrap_tor_client() {
+                    Ok(client) => {
+                        *mode.lock().unwrap() = ProxyMode::Tor(client);
+                        stage.set_phase(super::TorPhase::Ready);
+                    }
+                    Err(e) => {
+                        eprintln!("[qxchat-tor] bootstrap error: {e}");
+                        stage.set_phase(super::TorPhase::Error);
+                        stage.set_error(Some(e));
+                    }
+                }
+            })
+            .map_err(|e| eprintln!("[qxchat-tor] failed to spawn bootstrap thread: {e}"))
+            .ok();
+    }
+
+    /// Flips the proxy back to direct (passthrough) mode.
+    pub fn disable_tor(&self) {
+        *self.mode.lock().unwrap() = ProxyMode::Direct;
     }
 }
 
@@ -133,53 +171,42 @@ impl Drop for TorEngine {
     }
 }
 
-/// Runs Arti bootstrap + the SOCKS5 CONNECT loop on the current thread.
-fn run_engine(stop: Arc<AtomicBool>, port: u16, stage: Arc<Stage>) -> Result<(), String> {
-    // Create a Tokio runtime for Arti + the SOCKS listener. Arti's
-    // `PreferredRuntime` is Tokio, so `TorClient::builder()` must run inside a
-    // Tokio context.
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| format!("tokio runtime: {e}"))?;
+/// Builds and bootstraps a [`TorClient`], returning it wrapped in an `Arc` so
+/// it can be shared into the proxy's routing mode. This is the slow part (first
+/// boot downloads the consensus), so it runs on its own thread.
+pub fn bootstrap_tor_client() -> Result<Arc<TorClient<PreferredRuntime>>, String> {
+    // Create a *self-managed* runtime that owns its own tokio executor and keeps
+    // it alive for as long as this handle lives. This is critical: if we only
+    // wrapped the currently-running tokio runtime (obtained via
+    // `TorClient::builder()` / `PreferredRuntime::current()`), that runtime is
+    // local to this bootstrap thread's `block_on` and gets dropped when we
+    // return — leaving the TorClient with a dead runtime and making every
+    // subsequent `connect()` silently fail ("port listening but no network").
+    let runtime = PreferredRuntime::create().map_err(|e| format!("tor runtime: {e}"))?;
 
-    rt.block_on(async move {
-        let client = match TorClient::builder().create_unbootstrapped() {
-            Ok(c) => c,
-            Err(e) => {
-                stage.set_phase(super::TorPhase::Error);
-                stage.set_error(format!("arti create: {e}"));
-                return Err(format!("arti create: {e}"));
-            }
-        };
+    // `TorClient::with_runtime` takes ownership of `runtime`, so the executor
+    // stays alive for as long as the client (kept in an `Arc` by the caller).
+    let client = runtime.clone().block_on(async {
+        let client = TorClient::with_runtime(runtime)
+            .create_unbootstrapped()
+            .map_err(|e| format!("arti create: {e}"))?;
 
-        // Bootstrap to the live network (this is the slow part: first boot
-        // downloads the consensus, typically a few seconds).
-        if let Err(e) = client.bootstrap().await {
-            stage.set_phase(super::TorPhase::Error);
-            stage.set_error(format!("arti bootstrap: {e}"));
-            return Err(format!("arti bootstrap: {e}"));
-        }
+        client
+            .bootstrap()
+            .await
+            .map_err(|e| format!("arti bootstrap: {e}"))?;
 
-        // Populate an initial circuit right away so the UI has a live guard →
-        // middle → exit path to show even before the first real proxy request.
-        // This is best-effort and must not block the SOCKS listener.
-        if let Ok(stream) = client.connect(("example.com", 443_u16)).await {
-            let _ = publish_circuit(&client, &stream, &stage);
-        }
+        Ok::<_, String>(client)
+    })?;
 
-        // The SOCKS listener is what makes the proxy usable; only once it is
-        // bound do we mark Tor ready.
-        stage.set_phase(super::TorPhase::Ready);
-        serve_socks(&client, port, stop, stage).await
-    })
+    Ok(Arc::new(client))
 }
 
-/// Minimal SOCKS5 CONNECT-only proxy (no auth, no UDP associate).
-async fn serve_socks<R: Runtime>(
-    client: &TorClient<R>,
-    port: u16,
+/// Accepts SOCKS5 connections and routes them by the current [`ProxyMode`].
+async fn run_proxy(
     stop: Arc<AtomicBool>,
+    port: u16,
+    mode: Arc<Mutex<ProxyMode>>,
     stage: Arc<Stage>,
 ) -> Result<(), String> {
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
@@ -196,30 +223,31 @@ async fn serve_socks<R: Runtime>(
             Err(_) => continue,
         };
 
-        let client = TorClient::clone(client);
         let stop = Arc::clone(&stop);
+        let mode = Arc::clone(&mode);
         let stage = Arc::clone(&stage);
 
         tokio::spawn(async move {
             if stop.load(Ordering::SeqCst) {
                 return;
             }
-            let _ = handle_socks_conn(client, &mut socket, stage).await;
+            let _ = handle_socks_conn(mode, &mut socket, stage).await;
         });
     }
 
     Ok(())
 }
 
-/// Handles one SOCKS5 connection: greeting → CONNECT → relay bytes.
-async fn handle_socks_conn<R: Runtime>(
-    client: TorClient<R>,
+/// Handles one SOCKS5 connection: greeting → CONNECT → relay bytes, routing
+/// through Tor or directly depending on `mode`.
+async fn handle_socks_conn(
+    mode: Arc<Mutex<ProxyMode>>,
     socket: &mut tokio::net::TcpStream,
     stage: Arc<Stage>,
 ) -> Result<(), String> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    // --- Greeting: read methods offered by the client. ---
+    // --- Greeting ---
     let mut header = [0u8; 2];
     socket.read_exact(&mut header).await.map_err(|_| "read greeting")?;
     if header[0] != 0x05 {
@@ -230,16 +258,12 @@ async fn handle_socks_conn<R: Runtime>(
     socket.read_exact(&mut methods).await.map_err(|_| "read methods")?;
 
     // Reply "no authentication required" (method 0x00).
-    socket
-        .write_all(&[0x05, 0x00])
-        .await
-        .map_err(|_| "write method")?;
+    socket.write_all(&[0x05, 0x00]).await.map_err(|_| "write method")?;
 
-    // --- Request: version, cmd, addr. ---
+    // --- Request: version, cmd, addr ---
     let mut req = [0u8; 4];
     socket.read_exact(&mut req).await.map_err(|_| "read request")?;
     if req[0] != 0x05 || req[1] != 0x01 {
-        // Only CONNECT is supported.
         let _ = socket.write_all(&[0x05, 0x07, 0x00, 0x01, 0, 0, 0, 0, 0, 0]).await;
         return Err("unsupported command".into());
     }
@@ -247,69 +271,63 @@ async fn handle_socks_conn<R: Runtime>(
     // Parse the destination address.
     let (host, port) = match req[3] {
         0x01 => {
-            // IPv4
             let mut ip = [0u8; 4];
             socket.read_exact(&mut ip).await.map_err(|_| "read ipv4")?;
             let mut p = [0u8; 2];
             socket.read_exact(&mut p).await.map_err(|_| "read ipv4 port")?;
-            let p = u16::from_be_bytes(p);
-            (std::net::IpAddr::V4(ip.into()).to_string(), p)
+            (std::net::IpAddr::V4(ip.into()).to_string(), u16::from_be_bytes(p))
         }
         0x03 => {
-            // Domain name
             let mut len = [0u8; 1];
             socket.read_exact(&mut len).await.map_err(|_| "read domain len")?;
             let mut domain = vec![0u8; len[0] as usize];
             socket.read_exact(&mut domain).await.map_err(|_| "read domain")?;
             let mut p = [0u8; 2];
             socket.read_exact(&mut p).await.map_err(|_| "read domain port")?;
-            let p = u16::from_be_bytes(p);
-            (String::from_utf8_lossy(&domain).to_string(), p)
+            (String::from_utf8_lossy(&domain).to_string(), u16::from_be_bytes(p))
         }
         _ => {
-            // Only IPv4 and domain are handled for the common Tor case.
             let _ = socket.write_all(&[0x05, 0x08, 0x00, 0x01, 0, 0, 0, 0, 0, 0]).await;
             return Err("unsupported address type".into());
         }
     };
 
-    // Connect through Tor. Arti resolves the host (and supports `.onion`).
-    let addr = (host.as_str(), port)
-        .into_tor_addr()
-        .map_err(|e| format!("tor addr: {e}"))?;
-
-    let mut stream = match client.connect(addr).await {
-        Ok(s) => s,
-        Err(_) => {
-            // General failure (0x05 = connection refused/general error).
-            let _ = socket.write_all(&[0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0]).await;
-            return Err("tor connect failed".into());
+    // Route according to the current mode (clone the Arc'd client so the lock
+    // is not held across any await point).
+    let mode_snapshot = { mode.lock().unwrap().clone() };
+    match mode_snapshot {
+        ProxyMode::Direct => {
+            let upstream = tokio::net::TcpStream::connect((host.as_str(), port))
+                .await
+                .map_err(|_| "direct connect failed")?;
+            let _ = socket.write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]).await;
+            let mut upstream = upstream;
+            let _ = tokio::io::copy_bidirectional(&mut upstream, socket).await;
         }
-    };
-
-    // Publish the circuit this stream is riding on, so the UI can show the
-    // live guard → middle → exit path (like Tor Browser). Best-effort: failures
-    // here must never break the proxy.
-    let _ = publish_circuit(&client, &stream, &stage);
-
-    // Success reply.
-    let _ = socket.write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]).await;
-
-    // Relay bidirectional traffic. `DataStream` implements both
-    // `tokio::io::AsyncRead` and `AsyncWrite`, so it can be copied against the
-    // TCP socket directly.
-    let _ = tokio::io::copy_bidirectional(&mut stream, socket).await;
+        ProxyMode::Tor(client) => {
+            let addr = (host.as_str(), port)
+                .into_tor_addr()
+                .map_err(|e| format!("tor addr: {e}"))?;
+            let mut stream = match client.connect(addr).await {
+                Ok(s) => s,
+                Err(_) => {
+                    let _ = socket.write_all(&[0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0]).await;
+                    return Err("tor connect failed".into());
+                }
+            };
+            let _ = publish_circuit(&client, &stream, &stage);
+            let _ = socket.write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]).await;
+            let _ = tokio::io::copy_bidirectional(&mut stream, socket).await;
+        }
+    }
 
     Ok(())
 }
 
 /// Resolves the circuit of `stream` into a [`CircuitPath`] and stores it on
-/// `stage`. IPs and fingerprints come directly off the circuit's
-/// `OwnedChanTarget`s (role is derived from hop position); nicknames and
-/// countries come from the live directory. Best-effort: failures must never
-/// break the proxy itself.
-fn publish_circuit<R: Runtime>(
-    client: &TorClient<R>,
+/// `stage`. Best-effort.
+fn publish_circuit(
+    client: &Arc<TorClient<PreferredRuntime>>,
     stream: &arti_client::DataStream,
     stage: &Stage,
 ) -> Result<(), String> {
@@ -322,7 +340,6 @@ fn publish_circuit<R: Runtime>(
         return Ok(());
     }
 
-    // Resolve nicknames + countries from the live directory (best-effort).
     let netdir = client.dirmgr().netdir(tor_netdir::Timeliness::Timely).ok();
 
     let last = n - 1;
@@ -346,7 +363,6 @@ fn publish_circuit<R: Runtime>(
         let mut nickname = "Unnamed".to_string();
         let mut country = None;
 
-        // Enrich from the directory using the relay's Ed25519 identity.
         if let (Some(nd), Some(ed)) = (&netdir, hop.ed_identity()) {
             let relay_id = RelayId::Ed25519(*ed);
             if let Some(relay) = nd.by_id(&relay_id) {

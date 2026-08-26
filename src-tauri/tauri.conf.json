@@ -11,7 +11,19 @@
   },
   "app": {
     "withGlobalTauri": true,
-    "windows": [],
+    "windows": [
+      {
+        "label": "main",
+        "title": "QxChat",
+        "width": 1200,
+        "height": 800,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": false,
+        "devtools": true,
+        "additionalBrowserArgs": "--proxy-server=socks5://127.0.0.1:9050 --proxy-bypass-list=<-loopback>;localhost;127.0.0.1"
+      }
+    ],
     "security": {
       "csp": null
     }

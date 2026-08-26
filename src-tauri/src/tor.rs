@@ -73,13 +73,9 @@ pub struct TorStatus {
 
 /// Shared, managed run-state for the Tor client.
 pub struct TorState {
-    /// The active engine (Arti + SOCKS listener), if any. Dropping it stops Tor.
+    /// The permanent SOCKS5 proxy engine (always running).
     engine: Mutex<Option<engine::TorEngine>>,
     port: Mutex<u16>,
-    /// Live phase, driven by the engine thread (idle → bootstrapping → ready/error).
-    phase: Mutex<TorPhase>,
-    /// Last bootstrap/startup error message, cleared on a new start.
-    error: Mutex<Option<String>>,
     /// The engine's shared lifecycle stage (phase + latest circuit).
     stage: Mutex<Option<Arc<engine::Stage>>>,
 }
@@ -89,16 +85,22 @@ impl Default for TorState {
         Self {
             engine: Mutex::new(None),
             port: Mutex::new(DEFAULT_SOCKS_PORT),
-            phase: Mutex::new(TorPhase::Idle),
-            error: Mutex::new(None),
             stage: Mutex::new(None),
         }
     }
 }
 
 impl TorState {
+    fn stage(&self) -> Option<Arc<engine::Stage>> {
+        self.stage.lock().unwrap().clone()
+    }
+
+    fn phase(&self) -> TorPhase {
+        self.stage().map(|s| s.phase()).unwrap_or(TorPhase::Idle)
+    }
+
     fn is_running(&self) -> bool {
-        self.engine.lock().unwrap().is_some()
+        matches!(self.phase(), TorPhase::Ready | TorPhase::Bootstrapping)
     }
 
     /// Public accessor for the tray / app setup to know whether Tor is active.
@@ -115,26 +117,15 @@ impl TorState {
         self.current_port()
     }
 
-    fn phase(&self) -> TorPhase {
-        *self.phase.lock().unwrap()
-    }
-
-    fn set_phase(&self, phase: TorPhase) {
-        *self.phase.lock().unwrap() = phase;
-    }
-
-    fn set_error(&self, msg: Option<String>) {
-        *self.error.lock().unwrap() = msg;
-    }
-
     fn as_status(&self) -> TorStatus {
         let phase = self.phase();
+        let error = self.stage().and_then(|s| s.error());
         TorStatus {
             running: self.is_running(),
             port: self.current_port(),
             phase: phase.as_str(),
             error: if phase == TorPhase::Error {
-                self.error.lock().unwrap().clone()
+                error
             } else {
                 None
             },
@@ -162,101 +153,43 @@ async fn start<R: Runtime>(
     start_tor(&app, &state, port)
 }
 
-/// Starts Tor synchronously (reused by both the `start` command and the tray).
+/// Starts tor synchronously (reused by both the `start` command and the tray).
 pub fn start_tor<R: Runtime>(
     app: &AppHandle<R>,
     state: &TorState,
     port: Option<u16>,
 ) -> Result<TorStatus, String> {
-    // Idempotent: already running → just report current state.
     if state.is_running() {
         return Ok(state.as_status());
     }
 
     let requested = port.unwrap_or(DEFAULT_SOCKS_PORT);
     *state.port.lock().unwrap() = requested;
-    state.set_error(None);
-    state.set_phase(TorPhase::Bootstrapping);
     write_tor_enabled(app, true);
 
-    // Boot Arti + SOCKS listener on a background thread. `bootstrap` blocks the
-    // first time (consensus download), so it never runs on the command's
-    // runtime; the engine thread flips `stage` to Ready/Error when the listener
-    // is actually up (or on failure).
-    let stage = Arc::new(engine::Stage::new(TorPhase::Bootstrapping));
-    let engine_stage = Arc::clone(&stage);
-    let handle = engine::TorEngine::spawn(requested, engine_stage)?;
-    *state.engine.lock().unwrap() = Some(handle);
-    *state.stage.lock().unwrap() = Some(Arc::clone(&stage));
+    // Set bootstrapping on the stage, then ask the engine to bootstrap Tor and
+    // flip to Tor mode; `enable_tor` updates the stage to Ready/Error.
+    if let Some(stage) = state.stage() {
+        stage.set_error(None::<String>);
+        stage.set_phase(TorPhase::Bootstrapping);
+    }
 
-    // Apply the OS WebView proxy. On platforms where the WebView proxy cannot
-    // be applied post-hoc (macOS/WKWebView, WebView2 environment), this is a
-    // no-op or returns a descriptive error; the app can still use the raw
-    // SOCKS port from the frontend for explicit connections.
+    if let Some(engine) = state.engine.lock().unwrap().as_ref() {
+        if let Some(stage) = state.stage() {
+            engine.enable_tor(Arc::clone(&stage));
+            spawn_phase_watcher(app.clone(), stage);
+        }
+    }
+
+    // Apply the OS WebView proxy (runtime; Linux). On Windows the proxy is set
+    // via static browser args at window creation, so this is a no-op there.
     let proxy_result = platform::apply_proxy(app, requested);
-    emit_status(app, state);
-
     if let Err(e) = proxy_result {
-        // Report the proxy limitation without tearing down Tor itself.
         eprintln!("[qxchat-tor] webview proxy not applied: {e}");
     }
 
-    // Watch the engine stage from Rust (bootstrap finishes in the background)
-    // and stream the transition to `ready` / `error` back to the frontend.
-    spawn_phase_watcher(app.clone(), stage);
-
+    emit_status(app, state);
     Ok(state.as_status())
-}
-
-/// Starts Tor synchronously and blocks until the SOCKS listener is ready (or
-/// startup fails), so the caller can create the WebView *after* the proxy is
-/// actually available. Used only at boot, before the main window opens.
-pub fn start_tor_blocking<R: Runtime>(
-    app: &AppHandle<R>,
-    state: &TorState,
-    port: Option<u16>,
-    timeout: std::time::Duration,
-) -> Result<(), String> {
-    if state.is_running() {
-        return Ok(());
-    }
-
-    let requested = port.unwrap_or(DEFAULT_SOCKS_PORT);
-    *state.port.lock().unwrap() = requested;
-    state.set_error(None);
-    state.set_phase(TorPhase::Bootstrapping);
-
-    let stage = Arc::new(engine::Stage::new(TorPhase::Bootstrapping));
-    let engine_stage = Arc::clone(&stage);
-    let handle = engine::TorEngine::spawn(requested, engine_stage)?;
-    *state.engine.lock().unwrap() = Some(handle);
-    *state.stage.lock().unwrap() = Some(Arc::clone(&stage));
-
-    let started = std::time::Instant::now();
-    loop {
-        match stage.phase() {
-            TorPhase::Ready => {
-                state.set_phase(TorPhase::Ready);
-                let _ = app.emit("tor:status", state.as_status());
-                return Ok(());
-            }
-            TorPhase::Error => {
-                state.set_phase(TorPhase::Error);
-                state.set_error(stage.error());
-                let _ = app.emit("tor:status", state.as_status());
-                return Err(state.error.lock().unwrap().clone().unwrap_or_default());
-            }
-            _ => {}
-        }
-
-        if started.elapsed() > timeout {
-            state.set_phase(TorPhase::Error);
-            state.set_error(Some("Tor bootstrap timed out".into()));
-            return Err("Tor bootstrap timed out".into());
-        }
-
-        std::thread::sleep(std::time::Duration::from_millis(120));
-    }
 }
 
 /// Stops Tor and restores direct connectivity.
@@ -265,13 +198,60 @@ async fn stop<R: Runtime>(app: AppHandle<R>, state: State<'_, TorState>) -> Resu
     stop_tor(&app, &state)
 }
 
+/// Toggles Tor and then requests an app restart.
+///
+/// This is the *user-facing* toggle (used by both the Settings UI and the tray),
+/// distinct from the boot-time auto-start in `InboxView` (which calls
+/// `start`/`stop` directly and must NOT restart — otherwise the app would
+/// restart-loop on every boot for a persisted Tor-enabled session).
+///
+/// The restart is necessary because on Windows (WebView2) and macOS (WKWebView)
+/// the WebView proxy is fixed at window/environment creation and cannot be
+/// changed at runtime. A clean relaunch is the only reliable way to guarantee
+/// the WebView's network traffic actually routes through the (possibly) change
+/// proxy state.
+#[tauri::command]
+async fn toggle<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, TorState>,
+    enabled: bool,
+    port: Option<u16>,
+) -> Result<TorStatus, String> {
+    toggle_tor(&app, &state, enabled, port)
+}
+
+/// Toggles Tor (start/stop) then triggers a clean app restart so the WebView is
+/// recreated with the correct proxy configuration.
+pub fn toggle_tor<R: Runtime>(
+    app: &AppHandle<R>,
+    state: &TorState,
+    enabled: bool,
+    port: Option<u16>,
+) -> Result<TorStatus, String> {
+    let status = if enabled {
+        start_tor(app, state, port)?
+    } else {
+        stop_tor(app, state)?
+    };
+
+    // Persistence already happened inside start_tor/stop_tor; now relaunch so
+    // the WebView proxy takes effect. This is a no-op-on-error guard merely to
+    // surface the status before the process exits.
+    app.request_restart();
+    Ok(status)
+}
+
 /// Stops Tor synchronously (reused by both the `stop` command and the tray).
 pub fn stop_tor<R: Runtime>(app: &AppHandle<R>, state: &TorState) -> Result<TorStatus, String> {
-    // Drop the engine (stops Arti + SOCKS listener) and clear the proxy.
-    *state.engine.lock().unwrap() = None;
-    *state.stage.lock().unwrap() = None;
-    state.set_phase(TorPhase::Idle);
-    state.set_error(None);
+    // Flip the permanent proxy back to direct (passthrough); keep the proxy
+    // itself running so the WebView's static proxy never points at a dead port.
+    if let Some(engine) = state.engine.lock().unwrap().as_ref() {
+        engine.disable_tor();
+    }
+    if let Some(stage) = state.stage() {
+        stage.set_phase(TorPhase::Idle);
+        stage.set_error(None::<String>);
+    }
     let _ = platform::clear_proxy(app);
     write_tor_enabled(app, false);
     emit_status(app, state);
@@ -290,38 +270,36 @@ pub fn apply_proxy<R: Runtime>(app: &AppHandle<R>, port: u16) -> Result<(), Stri
     platform::apply_proxy(app, port)
 }
 
-/// Watches the engine's `stage` and mirrors it into the managed `TorState`,
-/// emitting `tor:status` whenever the phase changes (bootstrapping → ready/error).
+/// Watches the engine's `stage` and emits `tor:status` whenever the phase
+/// changes (bootstrapping → ready/error). The bootstrap thread flips the stage;
+/// this watcher surfaces that to the frontend.
 fn spawn_phase_watcher<R: Runtime>(app: AppHandle<R>, stage: Arc<engine::Stage>) {
     let _ = std::thread::Builder::new()
         .name("qxchat-tor-status".into())
         .spawn(move || {
+            // Emit the current phase immediately (handles the case where bootstrap
+            // has already completed before this watcher started), then enter the
+            // change-detection loop.
             let mut last = stage.phase();
             loop {
                 let current = stage.phase();
                 if current != last {
                     last = current;
-
-                    // Mirror into the managed state so `status` reflects it too.
-                    if let Some(state) = app.try_state::<TorState>() {
-                        state.set_phase(current);
-                        if current == TorPhase::Error {
-                            state.set_error(stage.error());
-                        }
-                    }
-
-                    let _ = app.emit(
-                        "tor:status",
-                        app.try_state::<TorState>()
-                            .map(|s| s.as_status())
-                            .unwrap_or_else(|| TorStatus {
-                                running: current == TorPhase::Ready || current == TorPhase::Bootstrapping,
-                                port: 0,
-                                phase: current.as_str(),
-                                error: stage.error(),
-                            }),
-                    );
                 }
+
+                let _ = app.emit(
+                    "tor:status",
+                    TorStatus {
+                        running: matches!(current, TorPhase::Ready | TorPhase::Bootstrapping),
+                        port: 0,
+                        phase: current.as_str(),
+                        error: if current == TorPhase::Error {
+                            stage.error()
+                        } else {
+                            None
+                        },
+                    },
+                );
 
                 if current == TorPhase::Ready || current == TorPhase::Error {
                     break;
@@ -425,9 +403,37 @@ pub fn read_tor_enabled<R: Runtime>(app: &AppHandle<R>) -> bool {
 /// Initializes the Tor plugin.
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("tor")
-        .invoke_handler(tauri::generate_handler![status, start, stop, is_ready, relays, circuit, geo])
+        .invoke_handler(tauri::generate_handler![status, start, stop, toggle, is_ready, relays, circuit, geo])
         .setup(|app, _api| {
             app.manage(TorState::default());
+
+            // Start the permanent SOCKS5 proxy (direct/passthrough by default) so
+            // the WebView's static `--proxy-server` always has a live port.
+            let state = app.state::<TorState>();
+            let port = state.current_port();
+            let stage = Arc::new(engine::Stage::new(TorPhase::Idle));
+            match engine::TorEngine::spawn(port, Arc::clone(&stage)) {
+                Ok(handle) => {
+                    *state.engine.lock().unwrap() = Some(handle);
+                    *state.stage.lock().unwrap() = Some(stage);
+                }
+                Err(e) => {
+                    eprintln!("[qxchat-tor] failed to start proxy: {e}");
+                }
+            }
+
+            // If the user left Tor enabled, bootstrap it now (without restart) so
+            // the backend is already `bootstrapping`/`ready` by the time the
+            // frontend loads. This removes the ambiguity where the frontend sees
+            // `idle` at boot and can't tell "Tor disabled" from "Tor not yet
+            // bootstrapped".
+            if read_tor_enabled(app) {
+                let state = app.state::<TorState>();
+                if let Err(e) = start_tor(app, &state, None) {
+                    eprintln!("[qxchat-tor] boot auto-start failed: {e}");
+                }
+            }
+
             Ok(())
         })
         .build()
