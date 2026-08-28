@@ -27,6 +27,7 @@
     "tor:allow-relays",
     "tor:allow-circuit",
     "tor:allow-geo",
+    "tor:allow-geo-ip",
     {
       "identifier": "opener:allow-open-url",
       "allow": [
