@@ -86,6 +86,10 @@ pub struct TorState {
     /// True when we detected a foreign Tor already bound to our SOCKS5 port and
     /// decided to reuse it instead of bootstrapping our own Arti client.
     external: Mutex<bool>,
+    /// Short-lived cache for the geo lookup (client + server), so repeatedly
+    /// opening the Tor map doesn't hammer the free geo-IP providers and trigger
+    /// their rate limits.
+    geo_cache: Mutex<Option<(std::time::Instant, geo::GeoInfo)>>,
 }
 
 impl Default for TorState {
@@ -95,6 +99,7 @@ impl Default for TorState {
             port: Mutex::new(DEFAULT_SOCKS_PORT),
             stage: Mutex::new(None),
             external: Mutex::new(false),
+            geo_cache: Mutex::new(None),
         }
     }
 }
@@ -396,8 +401,23 @@ fn circuit<R: Runtime>(
 /// Fetches the client's and server's coarse geolocation for the Tor map
 /// (public IP is masked; only country/lat/lng/AS are returned).
 #[tauri::command]
-async fn geo<R: Runtime>(_app: AppHandle<R>) -> Result<geo::GeoInfo, String> {
-    geo::fetch_geo().await
+async fn geo<R: Runtime>(_app: AppHandle<R>, state: State<'_, TorState>) -> Result<geo::GeoInfo, String> {
+    const GEO_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+
+    // Serve a fresh result instead of re-querying on every open. The lookup is
+    // coarse and IPs rarely move within a few minutes.
+    {
+        let cache = state.geo_cache.lock().unwrap();
+        if let Some((at, info)) = cache.as_ref() {
+            if at.elapsed() < GEO_CACHE_TTL {
+                return Ok(info.clone());
+            }
+        }
+    }
+
+    let info = geo::fetch_geo().await?;
+    *state.geo_cache.lock().unwrap() = Some((std::time::Instant::now(), info.clone()));
+    Ok(info)
 }
 
 /// Cheap TCP connectivity probe against the local SOCKS listener.
