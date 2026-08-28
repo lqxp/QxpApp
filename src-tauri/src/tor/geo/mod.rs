@@ -152,3 +152,10 @@ pub async fn fetch_geo() -> Result<GeoInfo, String> {
         server: server_point,
     })
 }
+
+/// Geolocates a single public IP (e.g. a Tor relay hop) through the provider
+/// fallback chain. Returns `None` when every provider fails to resolve it.
+pub async fn lookup_ip(ip: &str) -> Result<Option<GeoPoint>, String> {
+    let client = direct_client()?;
+    Ok(lookup_geo(&client, Some(ip)).await)
+}

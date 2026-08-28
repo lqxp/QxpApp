@@ -90,6 +90,8 @@ pub struct TorState {
     /// opening the Tor map doesn't hammer the free geo-IP providers and trigger
     /// their rate limits.
     geo_cache: Mutex<Option<(std::time::Instant, geo::GeoInfo)>>,
+    /// Per-IP geo cache for circuit relays (long-lived: relay IPs rarely move).
+    geo_ip_cache: Mutex<std::collections::HashMap<String, (std::time::Instant, geo::GeoPoint)>>,
 }
 
 impl Default for TorState {
@@ -100,6 +102,7 @@ impl Default for TorState {
             stage: Mutex::new(None),
             external: Mutex::new(false),
             geo_cache: Mutex::new(None),
+            geo_ip_cache: Mutex::new(std::collections::HashMap::new()),
         }
     }
 }
@@ -420,6 +423,40 @@ async fn geo<R: Runtime>(_app: AppHandle<R>, state: State<'_, TorState>) -> Resu
     Ok(info)
 }
 
+/// Geolocates a single public IP (e.g. a Tor relay hop) for the circuit map.
+#[tauri::command]
+async fn geo_ip<R: Runtime>(
+    _app: AppHandle<R>,
+    state: State<'_, TorState>,
+    ip: String,
+) -> Result<Option<geo::GeoPoint>, String> {
+    const GEO_IP_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(3600);
+
+    let ip = ip.trim().to_string();
+    if ip.is_empty() {
+        return Ok(None);
+    }
+
+    {
+        let cache = state.geo_ip_cache.lock().unwrap();
+        if let Some((at, point)) = cache.get(&ip) {
+            if at.elapsed() < GEO_IP_CACHE_TTL {
+                return Ok(Some(point.clone()));
+            }
+        }
+    }
+
+    let point = geo::lookup_ip(&ip).await?;
+    if let Some(point) = &point {
+        state
+            .geo_ip_cache
+            .lock()
+            .unwrap()
+            .insert(ip, (std::time::Instant::now(), point.clone()));
+    }
+    Ok(point)
+}
+
 /// Cheap TCP connectivity probe against the local SOCKS listener.
 async fn probe_port(port: u16) -> Result<bool, String> {
     match tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
@@ -553,7 +590,7 @@ fn resolve_foreign_tor<R: Runtime>(app: &AppHandle<R>) {
 /// Initializes the Tor plugin.
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("tor")
-        .invoke_handler(tauri::generate_handler![status, start, stop, toggle, is_ready, relays, circuit, geo])
+        .invoke_handler(tauri::generate_handler![status, start, stop, toggle, is_ready, relays, circuit, geo, geo_ip])
         .setup(|app, _api| {
             app.manage(TorState::default());
 

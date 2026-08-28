@@ -2775,6 +2775,12 @@
           "markdownDescription": "Enables the geo command without any pre-configured scope."
         },
         {
+          "description": "Enables the geo_ip command without any pre-configured scope.",
+          "type": "string",
+          "const": "tor:allow-geo-ip",
+          "markdownDescription": "Enables the geo_ip command without any pre-configured scope."
+        },
+        {
           "description": "Enables the is_ready command without any pre-configured scope.",
           "type": "string",
           "const": "tor:allow-is-ready",
@@ -2815,6 +2821,12 @@
           "type": "string",
           "const": "tor:deny-geo",
           "markdownDescription": "Denies the geo command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the geo_ip command without any pre-configured scope.",
+          "type": "string",
+          "const": "tor:deny-geo-ip",
+          "markdownDescription": "Denies the geo_ip command without any pre-configured scope."
         },
         {
           "description": "Denies the is_ready command without any pre-configured scope.",
