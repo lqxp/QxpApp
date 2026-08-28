@@ -1,6 +1,6 @@
 //! `ipinfo.io` (tokenless) geolocation provider.
 
-use super::{as_f64_flex, get_json, mask_ip, GeoPoint};
+use super::{get_json, mask_ip, GeoPoint};
 
 pub async fn lookup(client: &reqwest::Client, ip: Option<&str>) -> Option<GeoPoint> {
     let url = match ip {
