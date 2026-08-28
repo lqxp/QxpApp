@@ -34,6 +34,9 @@
           "url": "https://qxch.at/*"
         },
         {
+          "url": "https://github.com/*"
+        },
+        {
           "url": "mailto:*"
         },
         {
