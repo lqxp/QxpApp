@@ -331,8 +331,7 @@ fn publish_circuit(
     stream: &arti_client::DataStream,
     stage: &Stage,
 ) -> Result<(), String> {
-    use tor_geoip::HasCountryCode as _;
-    use tor_linkspec::{HasAddrs as _, HasRelayIds as _, RelayId};
+    use tor_linkspec::{HasAddrs as _, HasRelayIds as _};
 
     let path = stream.circuit().path_ref();
     let n = path.n_hops();
@@ -361,18 +360,23 @@ fn publish_circuit(
         let rsa = hop.rsa_identity().map(|id| id.to_string());
         let mut ip = hop.addrs().first().map(|a| a.ip().to_string());
         let mut nickname = "Unnamed".to_string();
-        let mut country = None;
 
         if let (Some(nd), Some(ed)) = (&netdir, hop.ed_identity()) {
-            let relay_id = RelayId::Ed25519(*ed);
+            let relay_id = tor_linkspec::RelayId::Ed25519(*ed);
             if let Some(relay) = nd.by_id(&relay_id) {
                 nickname = relay.rs().nickname().to_string();
                 if ip.is_none() {
                     ip = relay.addrs().first().map(|a| a.ip().to_string());
                 }
-                country = relay.country_code().map(|c| c.to_string());
             }
         }
+
+        // Country is deliberately NOT taken from the `tor-geoip` database: the
+        // relay directory is frequently stale for guards/exits. The frontend
+        // resolves country + exact coordinates for every hop IP through the
+        // Rust geo-IP backend instead. `country` is kept as a legacy field
+        // (always `None`) so the wire schema stays backward-compatible.
+        let country: Option<String> = None;
 
         resolved.push(CircuitHopInfo {
             role,
